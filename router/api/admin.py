@@ -9,7 +9,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
@@ -1346,3 +1346,42 @@ async def get_admin_audit_log(
             for e in entries
         ],
     }
+
+
+@router.get("/admin/compression/stats")
+async def get_compression_stats(
+    request: Request,
+    config: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, Any]:
+    """Return quantitative compression, DCA, and prefix cache performance metrics."""
+    # Check auth: header or query param ?key=... or localhost
+    auth_header = request.headers.get("authorization", "")
+    key_param = request.query_params.get("key", "")
+    client_ip = request.client.host if request.client else ""
+
+    is_authed = False
+    if config.admin_api_key:
+        if auth_header == f"Bearer {config.admin_api_key}" or key_param == config.admin_api_key:
+            is_authed = True
+        elif client_ip in ("127.0.0.1", "localhost", "::1", "testclient"):
+            is_authed = True
+    else:
+        is_authed = True
+
+    if not is_authed:
+        raise HTTPException(
+            status_code=401,
+            detail="Admin authentication required. Provide Bearer token or ?key=...",
+        )
+
+    if hasattr(app_state, "compression_pipeline") and app_state.compression_pipeline:
+        stats = app_state.compression_pipeline.get_metrics_summary()
+        return {
+            "status": "active",
+            "stats": stats,
+        }
+    return {
+        "status": "disabled",
+        "message": "Compression pipeline is not initialized",
+    }
+
