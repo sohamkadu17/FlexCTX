@@ -8,7 +8,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from router.api import admin_router, chat_router, health_router, models_router
+from router.api import admin_router, chat_router, demo_router, health_router, models_router
 from router.config import settings
 from router.lifecycle import lifespan
 from router.middleware import register_middleware
@@ -66,6 +66,7 @@ except ImportError:
 register_middleware(app)
 
 # Include all API routers
+app.include_router(demo_router)
 app.include_router(health_router)
 app.include_router(models_router)
 app.include_router(chat_router)
