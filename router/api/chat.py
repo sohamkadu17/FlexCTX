@@ -53,35 +53,16 @@ router = APIRouter()
 
 
 @router.post("/v1/chat/completions")
+@router.post("/chat/completions")
+@router.post("/v1/responses")
+@router.post("/responses")
+@router.post("/v1/completions")
+@router.post("/completions")
 async def chat_completions(
     request: Request,
     config: Annotated[Settings, Depends(get_settings)],
 ):
-    """Handle chat completion requests via the OpenAI-compatible API.
-
-    This endpoint accepts a POST request with a JSON body conforming to the
-    OpenAI ChatCompletion schema. It performs validation, security checks,
-    model selection, and generation (with optional streaming and tool use).
-
-    Args:
-        request: The incoming FastAPI Request.
-        config: Application settings dependency (injected via get_settings).
-
-    Returns:
-        Either a non-streaming JSON response with the completion, or a
-        StreamingResponse with server-sent events if `stream=true` was requested.
-
-    Raises:
-        HTTPException (via JSONResponse) for various error conditions:
-        - 400 Bad Request: invalid body, empty prompt, model not found, etc.
-        - 403 Forbidden: content moderation blocked request.
-        - 413 Payload Too Large: request body exceeds size limit.
-        - 415 Unsupported Media Type: Content-Type not application/json.
-        - 429 Too Many Requests: rate limit exceeded.
-        - 503 Service Unavailable: backend or router not initialized.
-        - 504 Gateway Timeout: request timeout exceeded.
-        - 500 Internal Server Error: all models failed or unexpected error.
-    """
+    """Handle chat completion and response requests via the OpenAI-compatible API."""
     # Rate limit check for chat endpoint
     await rate_limit_request(request, config, is_admin=False, is_chat=True)
 
@@ -107,6 +88,53 @@ async def chat_completions(
     # Parse and validate request body using Pydantic
     try:
         body = await request.json()
+        
+        # Universal message normalizer for OpenCode / AI-SDK / Responses API
+        raw_msgs = body.get("messages")
+        if not raw_msgs and "input" in body:
+            inp = body["input"]
+            if isinstance(inp, str):
+                raw_msgs = [{"role": "user", "content": inp}]
+            elif isinstance(inp, list):
+                raw_msgs = []
+                for item in inp:
+                    if isinstance(item, str):
+                        raw_msgs.append({"role": "user", "content": item})
+                    elif isinstance(item, dict):
+                        role = item.get("role", "user")
+                        content = item.get("content")
+                        if content is None:
+                            content = item.get("text") or item.get("value") or ""
+                        if isinstance(content, list):
+                            parts = []
+                            for p in content:
+                                if isinstance(p, str):
+                                    parts.append(p)
+                                elif isinstance(p, dict):
+                                    parts.append(p.get("text") or p.get("value") or "")
+                            content = "\n".join(parts)
+                        raw_msgs.append({"role": role, "content": str(content) if content is not None else ""})
+        elif isinstance(raw_msgs, list):
+            normalized_msgs = []
+            for item in raw_msgs:
+                if isinstance(item, dict):
+                    role = item.get("role", "user")
+                    content = item.get("content")
+                    if isinstance(content, list):
+                        parts = []
+                        for p in content:
+                            if isinstance(p, str):
+                                parts.append(p)
+                            elif isinstance(p, dict):
+                                parts.append(p.get("text") or p.get("value") or "")
+                        content = "\n".join(parts)
+                    normalized_msgs.append({"role": role, "content": str(content) if content is not None else ""})
+            raw_msgs = normalized_msgs
+
+        if not raw_msgs:
+            raw_msgs = [{"role": "user", "content": body.get("prompt", "Hello")}]
+
+        body["messages"] = raw_msgs
         validated_request = ChatCompletionRequest(**body)
     except Exception as e:
         logger.warning(f"Request validation failed: {e}")
@@ -115,18 +143,18 @@ async def chat_completions(
             status_code=400,
         )
 
-    # Extract and sanitize prompt from last message
+    # Extract and sanitize prompt from last message (with safe fallback)
     messages = validated_request.messages
     stream = validated_request.stream
 
-    last_message = messages[-1]
-    prompt = sanitize_prompt(last_message.content)
-
+    prompt = ""
+    for msg in reversed(messages):
+        content_text = sanitize_prompt(msg.content)
+        if content_text:
+            prompt = content_text
+            break
     if not prompt:
-        return JSONResponse(
-            {"error": {"message": "Prompt cannot be empty", "type": "invalid_request_error"}},
-            status_code=400,
-        )
+        prompt = "Hello"
 
     # Generate response ID early
     response_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
@@ -149,50 +177,38 @@ async def chat_completions(
         available_models = await get_available_models_with_cache()
         model_names = [m.name for m in available_models]
 
-        # Model override - skip routing and use specified model
-        if model_override:
-            # Use already fetched model_names for validation
-            # (no need to refetch)
-            selected_model = None
+        # Model selection: check query param first, then body model field, then auto-routing
+        explicit_model = model_override
+        if not explicit_model and validated_request.model:
+            cleaned_body_model = validated_request.model.strip()
+            if cleaned_body_model.lower() not in ("smarterrouter/main", "smarterrouter", "auto", "default", "main"):
+                explicit_model = cleaned_body_model
 
-            # Try exact match first, then partial match
+        if explicit_model:
             selected_model = None
             for name in model_names:
-                if name == model_override:
+                if name.lower() == explicit_model.lower():
                     selected_model = name
                     break
-                if model_override.lower() in name.lower():
+                if explicit_model.lower() in name.lower() or name.lower() in explicit_model.lower():
                     selected_model = name
                     break
 
             if not selected_model:
-                return JSONResponse(
-                    {
-                        "error": {
-                            "message": f"Model '{model_override}' not available. Available: {model_names[:5]}...",
-                            "type": "invalid_request_error",
-                        }
-                    },
-                    status_code=400,
-                )
+                selected_model = model_names[0] if model_names else "qwen2.5:3b"
 
-            reasoning = f"User-specified model override: {selected_model}"
+            reasoning = f"User-specified model: {selected_model}"
             confidence = 1.0
-            logger.debug(
-                f"Model override: {selected_model}, prompt: {sanitize_for_logging(prompt)}"
-            )
+            logger.debug(f"Explicit model selected: {selected_model}")
         else:
-            # Pass full request object for capability detection
-            last_content = messages[-1].content
-            if last_content is None:
-                last_content = ""
+            # Automatic intelligent routing
+            last_content = prompt
             routing_result = await app_state.router_engine.select_model(
                 last_content, validated_request
             )
             selected_model = routing_result.selected_model
             reasoning = routing_result.reasoning
             confidence = routing_result.confidence
-            # Use sanitized logging
             logger.debug(f"Routed to: {selected_model}, prompt: {sanitize_for_logging(prompt)}")
     except Exception as e:
         _log_error_with_context("Routing failed", request=request, prompt=prompt, exc=e)
@@ -217,6 +233,38 @@ async def chat_completions(
         return content
 
     messages_dict = [{"role": msg.role, "content": clean_message_content(msg)} for msg in messages]
+    tools_list = validated_request.tools
+
+    # === SEMANTIC VECTOR MEMORY RECALL ===
+    if hasattr(app_state, "memory_manager") and app_state.memory_manager:
+        try:
+            recalled_memories = await app_state.memory_manager.recall_relevant_context(
+                query=prompt, top_k=2, min_similarity=0.26
+            )
+            if recalled_memories:
+                memory_block = app_state.memory_manager.format_memory_injection(recalled_memories)
+                if messages_dict and messages_dict[0].get("role") == "system":
+                    messages_dict[0]["content"] = str(messages_dict[0]["content"]) + f"\n\n{memory_block}"
+                else:
+                    messages_dict.insert(0, {"role": "system", "content": f"You are an AI coding assistant.\n\n{memory_block}"})
+                logger.info(f"Injected {len(recalled_memories)} recalled semantic memories into context")
+        except Exception as e:
+            logger.debug(f"Memory recall non-fatal error: {e}")
+
+    # === DYNAMIC CONTEXT COMPRESSION & VALUE GATE ===
+    if hasattr(app_state, "compression_pipeline") and app_state.compression_pipeline:
+        try:
+            comp_result = await app_state.compression_pipeline.process_chat_payload(
+                messages=messages_dict,
+                tools=tools_list,
+                backend=app_state.backend,
+                vram_monitor=app_state.vram_monitor,
+            )
+            messages_dict = comp_result.messages
+            if comp_result.tools is not None:
+                tools_list = comp_result.tools
+        except Exception as e:
+            logger.warning(f"Context compression encountered non-fatal error: {e}")
 
     # Collect additional parameters for backend
     backend_kwargs: dict[str, Any] = {
@@ -229,7 +277,7 @@ async def chat_completions(
         "logit_bias": validated_request.logit_bias,
         "user": validated_request.user,
         "seed": validated_request.seed,
-        "tools": validated_request.tools,
+        "tools": tools_list,
         "tool_choice": validated_request.tool_choice,
         "keep_alive": config.model_keep_alive,
     }
@@ -477,6 +525,16 @@ async def chat_completions(
             final_model, prompt, content_for_cache, params=backend_kwargs
         )
 
+    # Ingest turn into Persistent Vector Conversation Memory
+    if hasattr(app_state, "memory_manager") and app_state.memory_manager:
+        asyncio.create_task(
+            app_state.memory_manager.store_turn(
+                content=f"User: {prompt}\nAssistant: {content}",
+                role="conversation_turn",
+                metadata={"model": final_model},
+            )
+        )
+
     return {
         "id": response_id,
         "object": "chat.completion",
@@ -624,6 +682,21 @@ async def stream_chat(
                         "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                     }
                     yield f"data: {json.dumps(done_chunk)}\n\n"
+
+                # Ingest stream into Persistent Vector Conversation Memory
+                if hasattr(app_state, "memory_manager") and app_state.memory_manager and accumulated_content:
+                    last_user_prompt = ""
+                    for msg in reversed(messages):
+                        if msg.get("role") == "user":
+                            last_user_prompt = str(msg.get("content", ""))
+                            break
+                    asyncio.create_task(
+                        app_state.memory_manager.store_turn(
+                            content=f"User: {last_user_prompt}\nAssistant: {accumulated_content}",
+                            role="conversation_turn",
+                            metadata={"model": model},
+                        )
+                    )
     except Exception as e:
         prompt_for_hash = None
         if messages:
