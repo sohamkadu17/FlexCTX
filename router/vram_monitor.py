@@ -279,8 +279,14 @@ class VRAMMonitor:
 
     # Public accessors remain unchanged
     def get_current(self) -> VRAMMetrics | None:
-        """Get the most recent metrics sample."""
-        return self._samples[-1] if self._samples else None
+        """Get the most recent metrics sample with fault tolerance under heavy load."""
+        try:
+            if not self._samples:
+                return None
+            return self._samples[-1]
+        except Exception as e:
+            logger.debug(f"Error accessing current VRAM sample (gracefully falling back): {e}")
+            return None
 
     def get_history(self, minutes: int = 10) -> list[VRAMMetrics]:
         """Return samples from the last N minutes."""
