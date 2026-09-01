@@ -103,6 +103,41 @@ async def startup_event() -> None:
             persistent_cache_max_age_days=settings.persistent_cache_max_age_days,
         )
 
+        # Initialize Context Compression Pipeline
+        try:
+            from router.compression import ContextCompressionPipeline
+
+            app_state.compression_pipeline = ContextCompressionPipeline(
+                enabled=settings.compression_enabled,
+                mode=settings.compression_mode,
+                target_context_limit=settings.dca_target_context_limit,
+                reserve_generation_tokens=settings.dca_reserve_generation_tokens,
+                arbitrage_slm_model=settings.arbitrage_model,
+                multilingual_threshold=settings.arbitrage_multilingual_threshold,
+                bm25_weight=settings.pruner_bm25_weight,
+                overlap_weight=settings.pruner_overlap_weight,
+                position_weight=settings.pruner_position_weight,
+                entropy_weight=settings.pruner_entropy_weight,
+                inv_filler_weight=settings.pruner_inv_filler_weight,
+                jaccard_threshold=settings.pruner_jaccard_threshold,
+            )
+            logger.info("Initialized Context Compression Middleware Pipeline")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Context Compression Pipeline: {e}")
+
+        # Initialize Persistent Vector Conversation Memory
+        try:
+            from router.memory import ConversationMemoryManager
+
+            app_state.memory_manager = ConversationMemoryManager(
+                db_path="data/conversation_memory.db",
+                ollama_url=getattr(settings, "ollama_url", "http://localhost:11434"),
+                embedding_model=getattr(settings, "embeddings_model", "nomic-embed-text"),
+            )
+            logger.info("Initialized Persistent Vector Conversation Memory Manager")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Vector Conversation Memory: {e}")
+
         try:
             available_models = await get_available_models_with_cache()
 
