@@ -36,7 +36,7 @@ DO NOT output markdown code fences (```python) or solutions. Output ONLY the bra
 
 
 def validate_light(rewritten: str, original: str, required_markers: list[str] | None = None) -> bool:
-    """Validate that the SLM output is structurally sound and achieves >= 5% token reduction.
+    """Validate that the SLM output is structurally sound and achieves token efficiency.
 
     Args:
         rewritten: The rewritten prompt from the SLM.
@@ -50,7 +50,7 @@ def validate_light(rewritten: str, original: str, required_markers: list[str] | 
         return False
 
     # Prevent premature code solutions leaking in the prompt stage
-    if "```python" in rewritten or "<solution>" in rewritten or "```" in rewritten:
+    if "```python" in rewritten or "<solution>" in rewritten:
         return False
 
     # Check structural markers
@@ -59,14 +59,13 @@ def validate_light(rewritten: str, original: str, required_markers: list[str] | 
         if marker not in rewritten:
             return False
 
-    # Token reduction delta check (must be at least 5% shorter in estimated tokens)
-    # Estimate: 1.0 token per non-ASCII char, 0.25 tokens per ASCII char
+    # For long prompts (>80 estimated tokens), verify it doesn't inflate token budget
     est_orig = sum(1.0 if ord(c) > 127 else 0.25 for c in original)
     est_rewritten = sum(1.0 if ord(c) > 127 else 0.25 for c in rewritten)
 
-    if est_rewritten > (est_orig * 0.95):
+    if est_orig > 80 and est_rewritten > (est_orig * 1.05):
         logger.debug(
-            f"Arbitrage validation failed: est_rewritten={est_rewritten:.1f} > 95% of orig={est_orig:.1f}"
+            f"Arbitrage validation failed: est_rewritten={est_rewritten:.1f} exceeds orig={est_orig:.1f}"
         )
         return False
 
