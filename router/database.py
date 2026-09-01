@@ -25,20 +25,16 @@ def _ensure_sqlite_setup():
     if "sqlite" not in settings.database_url.lower():
         return
 
-    database_url = settings.database_url
+    from sqlalchemy.engine.url import make_url
 
-    # Handle absolute SQLite URLs first (sqlite:////abs/path.db)
-    if database_url.startswith("sqlite:////"):
-        db_path = "/" + database_url.replace("sqlite:////", "", 1)
-    else:
-        db_path = database_url.replace("sqlite:///", "")
-        db_path = db_path.replace("sqlite://", "")
+    try:
+        url_obj = make_url(settings.database_url)
+        if not url_obj.database or url_obj.database == ":memory:":
+            return
+        db_file = Path(url_obj.database).resolve()
+    except Exception:
+        return
 
-    # Remove any query parameters
-    if "?" in db_path:
-        db_path = db_path.split("?")[0]
-
-    db_file = Path(db_path).absolute()
     db_dir = db_file.parent
 
     # 1. Check if the path is already a directory (common Docker mount mistake)
@@ -118,16 +114,16 @@ def init_db() -> None:
         logger.error(f"Failed to initialize database: {e}")
         # Provide extra context for SQLite errors
         if "unable to open database file" in str(e).lower():
-            database_url = settings.database_url
-            if database_url.startswith("sqlite:////"):
-                db_path = "/" + database_url.replace("sqlite:////", "", 1).split("?")[0]
-            else:
-                db_path = database_url.replace("sqlite:///", "").split("?")[0]
-            logger.error(f"DEBUG INFO: DB Path={db_path}, Absolute={Path(db_path).absolute()}")
-            logger.error(
-                f"DEBUG INFO: Exists={Path(db_path).exists()}, IsDir={Path(db_path).is_dir()}"
-            )
-            logger.error(f"DEBUG INFO: Dir Writable={os.access(Path(db_path).parent, os.W_OK)}")
+            from sqlalchemy.engine.url import make_url
+
+            try:
+                db_path_str = make_url(settings.database_url).database or ""
+                p = Path(db_path_str).resolve()
+                logger.error(f"DEBUG INFO: DB Path={p}, Absolute={p.absolute()}")
+                logger.error(f"DEBUG INFO: Exists={p.exists()}, IsDir={p.is_dir()}")
+                logger.error(f"DEBUG INFO: Dir Writable={os.access(p.parent, os.W_OK)}")
+            except Exception:
+                pass
         raise
 
 

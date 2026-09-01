@@ -446,15 +446,17 @@ async def download_provider_db() -> bool:
             await asyncio.to_thread(_write_temp)
 
             # Verify it's a valid SQLite database
+            import os
             import sqlite3
 
-            with sqlite3.connect(temp_path) as conn:
+            conn = sqlite3.connect(temp_path)
+            try:
                 conn.execute("SELECT COUNT(*) FROM model_benchmarks")
+            finally:
+                conn.close()
 
-            # Atomic rename
-            import shutil
-
-            shutil.move(temp_path, db_path)
+            # Atomic replace
+            os.replace(temp_path, db_path)
 
             logger.info("provider.db updated successfully")
             return True

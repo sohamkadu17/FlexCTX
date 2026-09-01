@@ -140,6 +140,10 @@ def get_model_vram_estimate(model_name: str) -> float:
                 estimate = profile.vram_required_gb
                 _VRAM_ESTIMATE_CACHE[model_name] = (estimate, now)
                 return estimate
+            elif profile and profile.size_bytes:
+                estimate = round(profile.size_bytes / (1024**3), 1)
+                _VRAM_ESTIMATE_CACHE[model_name] = (estimate, now)
+                return estimate
     except Exception as e:
         logger.debug(f"Could not fetch VRAM estimate for {model_name}: {e}")
 
@@ -197,6 +201,8 @@ def get_model_vram_estimates_batch(model_names: list[str]) -> dict[str, float]:
                     profile = profile_map.get(model_name)
                     if profile and profile.vram_required_gb:
                         estimate = profile.vram_required_gb
+                    elif profile and profile.size_bytes:
+                        estimate = round(profile.size_bytes / (1024**3), 1)
                     else:
                         estimate = settings.vram_default_estimate_gb
 
