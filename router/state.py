@@ -306,6 +306,12 @@ class AppState:
         self.MODEL_LIST_CACHE_TTL: float = 30.0
         self.requests_by_category: dict[str, int] = {}
 
+        # Context Compression Pipeline
+        self.compression_pipeline: Any | None = None
+
+        # Persistent Vector Conversation Memory Manager
+        self.memory_manager: Any | None = None
+
 
 app_state = AppState()
 
