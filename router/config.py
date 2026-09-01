@@ -412,6 +412,65 @@ class Settings(BaseSettings):
     cohere_base_url: str | None = Field(default=None)
     mistral_base_url: str | None = Field(default=None)
 
+    # Hardware Presets: "6GB_VRAM", "12GB_VRAM", "24GB_VRAM", "CUSTOM"
+    hardware_preset: str = Field(default="6GB_VRAM")
+
+    # =============================================================================
+    # Dynamic Context Compression & DCA Settings
+    # =============================================================================
+    compression_enabled: bool = Field(default=True)
+    compression_mode: str = Field(default="full")  # "full", "statistical_only", "arbitrage_only", "cache_align_only"
+
+    # Dynamic Context-Window Allocation (DCA)
+    dca_enabled: bool = Field(default=True)
+    dca_target_context_limit: int = Field(default=8192)
+    dca_reserve_generation_tokens: int = Field(default=2048)
+
+    # Cross-Lingual Token Arbitrage (Pillar 1)
+    arbitrage_enabled: bool = Field(default=True)
+    arbitrage_model: str = Field(default="qwen2.5:3b")
+    arbitrage_multilingual_threshold: float = Field(default=0.15)  # >15% non-ASCII triggers SLM
+    arbitrage_device: str = Field(default="gpu")  # "gpu" or "cpu"
+
+    # Statistical Lexical Pruner (Pillar 2 - LeanCTX)
+    pruner_enabled: bool = Field(default=True)
+    pruner_bm25_weight: float = Field(default=0.35)
+    pruner_overlap_weight: float = Field(default=0.25)
+    pruner_position_weight: float = Field(default=0.15)
+    pruner_entropy_weight: float = Field(default=0.15)
+    pruner_inv_filler_weight: float = Field(default=0.10)
+    pruner_jaccard_threshold: float = Field(default=0.85)
+
+    # Prefix Cache Alignment & CAR (Pillar 3)
+    cache_align_enabled: bool = Field(default=True)
+    car_enabled: bool = Field(default=True)
+    car_max_entries: int = Field(default=5000)
+
+    @model_validator(mode="after")
+    def apply_hardware_preset(self) -> "Settings":
+        """Automatically configure optimal VRAM budgets and models based on hardware preset."""
+        preset = (self.hardware_preset or "").upper()
+        if preset == "6GB_VRAM":
+            if self.vram_max_total_gb is None:
+                self.vram_max_total_gb = 5.8
+            if self.pinned_model is None:
+                self.pinned_model = "qwen2.5:3b"
+            self.dca_target_context_limit = 8192
+            self.vram_default_estimate_gb = 2.5
+        elif preset == "12GB_VRAM":
+            if self.vram_max_total_gb is None:
+                self.vram_max_total_gb = 11.5
+            if self.pinned_model is None:
+                self.pinned_model = "Qwen2.5-Coder:7B"
+            self.dca_target_context_limit = 16384
+        elif preset == "24GB_VRAM":
+            if self.vram_max_total_gb is None:
+                self.vram_max_total_gb = 23.0
+            if self.pinned_model is None:
+                self.pinned_model = "llama3.1:latest"
+            self.dca_target_context_limit = 32768
+        return self
+
     @model_validator(mode="after")
     def validate_external_providers(self) -> "Settings":
         """Validate external provider configuration."""
