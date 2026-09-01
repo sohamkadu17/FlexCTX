@@ -113,25 +113,28 @@ class Settings(BaseSettings):
         if not isinstance(database_url, str) or "sqlite" not in database_url.lower():
             return self
 
-        if database_url.startswith("sqlite:////"):
-            return self
-
-        sqlite_prefixes = ("sqlite:///", "sqlite://")
+        sqlite_prefixes = ("sqlite:////", "sqlite:///", "sqlite://")
         path = None
         for prefix in sqlite_prefixes:
             if database_url.startswith(prefix):
-                path = database_url.replace(prefix, "", 1)
+                path = database_url[len(prefix):]
                 break
 
-        if path is None:
+        if path is None or not path or path == ":memory:":
             return self
 
-        if path.startswith("/"):
-            return self
+        p = Path(path)
+        if p.is_absolute():
+            resolved = p.resolve().as_posix()
+        else:
+            base_dir = Path(__file__).resolve().parents[1]
+            resolved = (base_dir / path).resolve().as_posix()
 
-        base_dir = Path(__file__).resolve().parents[1]
-        resolved = (base_dir / path).resolve()
-        self.database_url = f"sqlite:////{resolved}"
+        # Format URL properly: on POSIX /app/data -> sqlite:////app/data, on Windows C:/... -> sqlite:///C:/...
+        if resolved.startswith("/"):
+            self.database_url = f"sqlite:////{resolved.lstrip('/')}"
+        else:
+            self.database_url = f"sqlite:///{resolved}"
         return self
 
     polling_interval: int = Field(default=300)
@@ -368,7 +371,7 @@ class Settings(BaseSettings):
     vram_unload_strategy: str = Field(default="lru")  # "lru" or "largest"
 
     # Fallback VRAM estimate when not profiled (in GB)
-    vram_default_estimate_gb: float = Field(default=8.0)
+    vram_default_estimate_gb: float = Field(default=3.5)
 
     # External Provider Database (provider.db)
     # Path to provider.db containing benchmark data for external models
