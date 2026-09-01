@@ -5,8 +5,8 @@ import re
 # Compiled regex patterns for critical structural lines that must NEVER be pruned
 FORCE_KEEP_PATTERNS = [
     # Security, Credentials, and Authentication Tokens
-    re.compile(r"(?i)\b(bearer\s+[a-zA-Z0-9_\-\.=]+|api[_-]?key|jwt|access[_-]?token|secret[_-]?key|password|auth[_-]?token)\b"),
-    re.compile(r"(?i)(sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|eyJ[a-zA-Z0-9_\-]{20,})"),
+    re.compile(r"(?i)(bearer\s+[a-zA-Z0-9_\-\.=]+|api[_-]?key|jwt|access[_-]?token|secret[_-]?key|password|auth[_-]?token)"),
+    re.compile(r"(?i)(sk-[a-zA-Z0-9_\-]{10,}|ghp_[a-zA-Z0-9]{20,}|eyJ[a-zA-Z0-9_\-]{20,})"),
 
     # File System Paths, URIs, and Endpoints
     re.compile(r"(?i)(https?://[^\s\"'>]+|file://[^\s\"'>]+)"),
