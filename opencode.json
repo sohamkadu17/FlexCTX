@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "smarterrouter": {
+      "name": "SmarterRouter",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://localhost:11436/v1",
+        "apiKey": "admin123"
+      },
+      "models": {
+        "smarterrouter/main": {
+          "name": "SmarterRouter (VRAM Adaptive & Compressed)"
+        },
+        "qwen2.5:3b": {
+          "name": "Qwen 2.5 3B"
+        }
+      }
+    }
+  }
+}
