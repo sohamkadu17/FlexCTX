@@ -16,13 +16,14 @@ fallback cascades if the selected model fails and includes comprehensive error
 handling and logging.
 """
 
+
 import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated, Any
-
+import asyncio
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
