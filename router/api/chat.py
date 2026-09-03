@@ -17,13 +17,14 @@ handling and logging.
 """
 
 
+import asyncio
 import json
 import logging
+import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated, Any
-import asyncio
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -51,6 +52,81 @@ from router.state import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _parse_text_tool_call(content: Any, tools: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """Normalize local models that print a tool call instead of using tool_calls."""
+    if not isinstance(content, str):
+        return None
+
+    # OpenCode may describe its tools in the prompt instead of sending the
+    # formal tools array through an OpenAI-compatible provider.
+    opencode_tool_names = {
+        "bash",
+        "delete",
+        "edit",
+        "glob",
+        "grep",
+        "ls",
+        "npm",
+        "question",
+        "read",
+        "touch",
+        "write",
+    }
+    tool_names = {
+        tool.get("function", {}).get("name")
+        for tool in tools
+        if isinstance(tool, dict)
+    } if tools else opencode_tool_names
+    candidates = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
+    candidates.append(content.strip())
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
+        json_candidates = [candidate]
+        if candidate == content.strip():
+            json_candidates = [
+                candidate[index:]
+                for index, character in enumerate(candidate)
+                if character == "{"
+            ]
+        for json_candidate in json_candidates:
+            try:
+                parsed, _ = decoder.raw_decode(json_candidate)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            name = parsed.get("name")
+            arguments = parsed.get("arguments", parsed.get("parameters"))
+            normalized_name = "bash" if name == "npm" and "bash" in tool_names else name
+            if normalized_name not in tool_names or not isinstance(arguments, (dict, str)):
+                continue
+            if isinstance(arguments, str):
+                try:
+                    decoded_arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    decoded_arguments = arguments
+                arguments = decoded_arguments
+            if not isinstance(arguments, dict):
+                arguments = {"questions": arguments}
+            if name == "npm" and "npm" not in tool_names:
+                name = normalized_name
+                workdir = arguments.get("workdir")
+                if isinstance(workdir, str) and re.search(
+                    r"(?:/path/to|[A-Za-z]:\\path\\to)", workdir, re.IGNORECASE
+                ):
+                    arguments.pop("workdir", None)
+                arguments = {
+                    "command": "npm " + arguments.get("command", ""),
+                    **({"workdir": arguments["workdir"]} if "workdir" in arguments else {}),
+                }
+            return {
+                "id": f"call_text_{uuid.uuid4().hex[:12]}",
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(arguments)},
+            }
+    return None
 
 
 @router.post("/v1/chat/completions")
@@ -465,11 +541,68 @@ async def chat_completions(
     tool_calls_made = 0
 
     while tool_calls_made < max_tool_calls:
-        tool_calls = response.get("message", {}).get("tool_calls")
+        response_message = response.get("message", {})
+        tool_calls = response_message.get("tool_calls")
+        if not tool_calls:
+            text_tool_call = _parse_text_tool_call(
+                response_message.get("content"), tools_list
+            )
+            if text_tool_call:
+                response_message["tool_calls"] = [text_tool_call]
+                tool_calls = response_message["tool_calls"]
         if not tool_calls:
             break
 
         logger.info(f"Model {final_model} requested {len(tool_calls)} tool call(s)")
+
+        # Tools supplied by OpenCode belong to the caller and must be returned
+        # as structured tool calls so OpenCode can execute them locally.
+        external_tool_calls = [
+            tool_call
+            for tool_call in tool_calls
+            if not skills_registry.get_skill(tool_call.get("function", {}).get("name", ""))
+        ]
+        if external_tool_calls:
+            forwarded_tool_calls = []
+            for tool_index, tool_call in enumerate(external_tool_calls):
+                function = tool_call.get("function", {})
+                arguments = function.get("arguments", {})
+                if not isinstance(arguments, str):
+                    arguments = json.dumps(arguments)
+                forwarded_tool_calls.append(
+                    {
+                        "id": tool_call.get("id", f"call_{response_id}_{tool_index}"),
+                        "type": "function",
+                        "function": {
+                            "name": function.get("name", ""),
+                            "arguments": arguments,
+                        },
+                    }
+                )
+            return {
+                "id": response_id,
+                "object": "chat.completion",
+                "created": int(datetime.now(UTC).timestamp()),
+                "model": final_model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": forwarded_tool_calls,
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": response.get("prompt_eval_count", 0),
+                    "completion_tokens": response.get("eval_count", 0),
+                    "total_tokens": response.get("prompt_eval_count", 0)
+                    + response.get("eval_count", 0),
+                },
+                "router": {"reasoning": reasoning},
+            }
 
         # Add assistant message with tool calls to history
         messages_dict.append(response["message"])
@@ -612,9 +745,11 @@ async def stream_chat(
         yield f"data: {json.dumps(initial_chunk)}\n\n"
 
         accumulated_content = ""
+        saw_tool_calls = False
 
         async for chunk in stream:
-            content = chunk.get("message", {}).get("content", "")
+            message = chunk.get("message", {})
+            content = message.get("content", "")
             if content:
                 accumulated_content += content
 
@@ -627,7 +762,64 @@ async def stream_chat(
                 }
                 yield f"data: {json.dumps(content_chunk)}\n\n"
 
+            tool_calls = message.get("tool_calls", [])
+            if tool_calls:
+                saw_tool_calls = True
+                tool_call_deltas = []
+                for tool_index, tool_call in enumerate(tool_calls):
+                    function = tool_call.get("function", {})
+                    arguments = function.get("arguments", "")
+                    if not isinstance(arguments, str):
+                        arguments = json.dumps(arguments)
+                    tool_call_deltas.append(
+                        {
+                            "index": tool_index,
+                            "id": tool_call.get("id", f"call_{chunk_id}_{tool_index}"),
+                            "type": "function",
+                            "function": {
+                                "name": function.get("name", ""),
+                                "arguments": arguments,
+                            },
+                        }
+                    )
+                tool_call_chunk = {
+                    "id": chunk_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"tool_calls": tool_call_deltas},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                yield f"data: {json.dumps(tool_call_chunk)}\n\n"
+
             if chunk.get("done", False):
+                text_tool_call = None
+                if not saw_tool_calls:
+                    text_tool_call = _parse_text_tool_call(
+                        accumulated_content, kwargs.get("tools")
+                    )
+                if text_tool_call:
+                    saw_tool_calls = True
+                    tool_call_chunk = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"tool_calls": [text_tool_call]},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    yield f"data: {json.dumps(tool_call_chunk)}\n\n"
+
                 # Use schemas.py function to handle code blocks properly
                 closed_content = close_unclosed_code_block(accumulated_content)
 
@@ -680,7 +872,13 @@ async def stream_chat(
                         "object": "chat.completion.chunk",
                         "created": created,
                         "model": model,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "tool_calls" if saw_tool_calls else "stop",
+                            }
+                        ],
                     }
                     yield f"data: {json.dumps(done_chunk)}\n\n"
 
