@@ -383,7 +383,158 @@ ROUTER_MODEL_POLLING_INTERVAL=60
 # When a model is no longer available, mark it inactive instead of deleting
 ROUTER_MODEL_CLEANUP_ENABLED=false
 
-# Automatically profile newly discovered models (default: false)
+# Automatically profile newly discovered models (default: true)
 # Profiles new models immediately after detection (requires model_polling_enabled)
-ROUTER_MODEL_AUTO_PROFILE_ENABLED=false
+ROUTER_MODEL_AUTO_PROFILE_ENABLED=true
+
+# Parallel Profiling - Number of models to profile concurrently (default: 1)
+# Set to 2-3 for multi-GPU systems or when models fit in VRAM simultaneously
+ROUTER_PROFILE_PARALLEL_COUNT=1
+
+# =============================================================================
+# HARDWARE PRESETS
+# =============================================================================
+
+# Preset profile: "6GB_VRAM", "12GB_VRAM", "24GB_VRAM", "CUSTOM" (default: 6GB_VRAM)
+# Automatically configures optimal VRAM ceilings, pinned baseline models, and context allocations
+ROUTER_HARDWARE_PRESET=6GB_VRAM
+
+# Apple Silicon Unified Memory Override (GB, optional)
+# SmarterRouter auto-detects ~75% of system RAM. Override here if desired:
+# ROUTER_APPLE_UNIFIED_MEMORY_GB=24.0
+
+# AMD APU Unified Memory Override (GB, optional)
+# Auto-detected from GTT pool. Override here if desired:
+# ROUTER_AMD_UNIFIED_MEMORY_GB=16.0
+
+# =============================================================================
+# DYNAMIC CONTEXT COMPRESSION & DCA
+# =============================================================================
+
+# Master toggle for pre-flight context compression pipeline (default: true)
+ROUTER_COMPRESSION_ENABLED=true
+
+# Compression mode: "full", "statistical_only", "arbitrage_only", "cache_align_only"
+ROUTER_COMPRESSION_MODE=full
+
+# Dynamic Context-Window Allocation (DCA)
+ROUTER_DCA_ENABLED=true
+ROUTER_DCA_TARGET_CONTEXT_LIMIT=8192
+ROUTER_DCA_RESERVE_GENERATION_TOKENS=2048
+
+# Pillar 1: Cross-Lingual Token Arbitrage
+ROUTER_ARBITRAGE_ENABLED=true
+ROUTER_ARBITRAGE_MODEL=qwen2.5:3b
+ROUTER_ARBITRAGE_MULTILINGUAL_THRESHOLD=0.15
+ROUTER_ARBITRAGE_DEVICE=gpu
+
+# Pillar 2: Statistical Lexical Pruner (BM25 + Entropy + Structure)
+ROUTER_PRUNER_ENABLED=true
+ROUTER_PRUNER_BM25_WEIGHT=0.35
+ROUTER_PRUNER_OVERLAP_WEIGHT=0.25
+ROUTER_PRUNER_POSITION_WEIGHT=0.15
+ROUTER_PRUNER_ENTROPY_WEIGHT=0.15
+ROUTER_PRUNER_INV_FILLER_WEIGHT=0.10
+ROUTER_PRUNER_JACCARD_THRESHOLD=0.85
+
+# Pillar 3: Prefix Cache Alignment & Content-Addressable Recovery (CAR)
+ROUTER_CACHE_ALIGN_ENABLED=true
+ROUTER_CAR_ENABLED=true
+ROUTER_CAR_MAX_ENTRIES=5000
+
+# =============================================================================
+# EXTERNAL CLOUD PROVIDERS
+# =============================================================================
+
+# Route to external cloud models alongside or instead of local Ollama
+ROUTER_EXTERNAL_PROVIDERS_ENABLED=false
+ROUTER_EXTERNAL_PROVIDERS=openai,anthropic,google
+
+# API Keys
+# ROUTER_OPENAI_API_KEY=sk-...
+# ROUTER_ANTHROPIC_API_KEY=sk-ant-...
+# ROUTER_GOOGLE_API_KEY=...
+# ROUTER_COHERE_API_KEY=...
+# ROUTER_MISTRAL_API_KEY=...
+
+# Custom Base URLs (optional, for enterprise proxies or self-hosted gateways)
+# ROUTER_ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
+# ROUTER_GOOGLE_BASE_URL=https://generativelanguage.googleapis.com/v1
+# ROUTER_COHERE_BASE_URL=https://api.cohere.ai/v1
+# ROUTER_MISTRAL_BASE_URL=https://api.mistral.ai/v1
+
+# provider.db external model benchmark database
+ROUTER_PROVIDER_DB_ENABLED=true
+ROUTER_PROVIDER_DB_PATH=data/provider.db
+ROUTER_PROVIDER_DB_MAX_AGE_HOURS=168
+ROUTER_PROVIDER_DB_AUTO_UPDATE_HOURS=4
+ROUTER_PROVIDER_DB_DOWNLOAD_URL=https://raw.githubusercontent.com/peva3/smarterrouter-provider/refs/heads/main/data/provider.db
+
+# In-memory benchmark fallback when DB is slow/degraded
+ROUTER_DB_SLOW_FALLBACK_ENABLED=true
+ROUTER_DB_SLOW_QUERY_THRESHOLD_MS=250
+ROUTER_DB_SLOW_FALLBACK_WINDOW_SECONDS=30
+ROUTER_DB_STALE_CACHE_MAX_AGE_SECONDS=300
+
+# =============================================================================
+# BACKEND RESILIENCE & CIRCUIT BREAKER
+# =============================================================================
+
+# Retry transient failures (HTTP 429, 5xx, timeouts)
+ROUTER_BACKEND_RETRY_ENABLED=true
+ROUTER_BACKEND_MAX_RETRIES=3
+ROUTER_BACKEND_RETRY_BASE_DELAY=1.0
+ROUTER_BACKEND_RETRY_MAX_DELAY=10.0
+
+# Circuit Breaker to prevent cascading failures
+ROUTER_BACKEND_CIRCUIT_BREAKER_ENABLED=false
+ROUTER_BACKEND_CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
+ROUTER_BACKEND_CIRCUIT_BREAKER_RESET_TIMEOUT=60.0
+ROUTER_BACKEND_CIRCUIT_BREAKER_HALF_OPEN_MAX_ATTEMPTS=3
+ROUTER_BACKEND_CIRCUIT_BREAKER_SLIDING_WINDOW_SIZE=100
+ROUTER_BACKEND_CIRCUIT_BREAKER_QUOTA_RESET_TIMEOUT=3600.0
+
+# Dead Letter Queue (DLQ) for failed background tasks
+ROUTER_DLQ_ENABLED=true
+ROUTER_DLQ_MAX_RETRIES=3
+ROUTER_DLQ_RETRY_BASE_DELAY_SECONDS=60
+ROUTER_DLQ_AUTO_RETRY_BATCH_SIZE=10
+
+# =============================================================================
+# ADVANCED SECURITY, CORS & MODERATION
+# =============================================================================
+
+# Prompt injection detection ("log", "warn", or "block")
+ROUTER_PROMPT_INJECTION_DETECTION_ENABLED=true
+ROUTER_PROMPT_INJECTION_ACTION=log
+
+# TLS Verification (set to false only in dev with self-signed certs)
+ROUTER_VERIFY_TLS=true
+
+# CORS configuration
+ROUTER_CORS_ORIGINS=*
+ROUTER_CORS_ALLOW_CREDENTIALS=false
+ROUTER_CORS_ALLOW_METHODS=GET,POST,PUT,DELETE,OPTIONS
+ROUTER_CORS_ALLOW_HEADERS=*
+ROUTER_CORS_MAX_AGE=600
+
+# Admin IP Whitelist (empty = allow all IPs with valid Admin API key)
+# Example: ROUTER_ADMIN_ALLOWED_IPS=127.0.0.1,10.0.0.0/8
+# ROUTER_ADMIN_ALLOWED_IPS=
+
+# Request body size limits
+ROUTER_MAX_REQUEST_BODY_BYTES=10485760
+ROUTER_MAX_MESSAGE_CONTENT_LENGTH=100000
+
+# Admin Audit Logging to database
+ROUTER_ADMIN_AUDIT_ENABLED=true
+
+# Content moderation ("log" or "block")
+ROUTER_CONTENT_MODERATION_ENABLED=false
+ROUTER_CONTENT_MODERATION_ACTION=block
+# ROUTER_CONTENT_MODERATION_WEBHOOK_URL=
+
+# Master Fernet key for encrypting stored provider credentials
+# ROUTER_ENCRYPTION_KEY=
+
 

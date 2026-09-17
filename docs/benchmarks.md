@@ -233,6 +233,37 @@ Each source typically adds <1 second to startup (cached). Full resync from all s
 
 ---
 
+## provider.db Offline Benchmark Database
+
+In addition to live online APIs, SmarterRouter integrates an offline benchmark database `data/provider.db`.
+
+### Key Features
+- Pre-compiled scores for **400+ models** across **28+ benchmark datasets** (including Chatbot Arena ELO, MMLU, HumanEval, GPQA, Math-500).
+- Auto-downloaded and synchronized in the background every 4 hours (`ROUTER_PROVIDER_DB_AUTO_UPDATE_HOURS=4`).
+- Provides instant benchmark lookups for cloud models (`openai/*`, `anthropic/*`, `google/*`, `cohere/*`, `mistral/*`) without requiring third-party API keys.
+- **Graceful Fallback:** If the database file is temporarily unavailable or locked during an update, the router continues routing using in-memory cached scores without service interruption.
+
+---
+
+## Academic Evaluation Suite (`benchmark.py`)
+
+SmarterRouter includes a standalone academic benchmark script in the repository root: `benchmark.py`.
+
+### Measured Metrics
+1. **Token Savings Percentage**: Compares prompt tokens before and after pre-flight compression.
+2. **Time-To-First-Token (TTFT)**: Measures reduction in GPU prefill latency.
+3. **End-to-End Processing Latency**: Measures turn completion time.
+4. **Peak GPU VRAM Footprint**: Monitors memory delta via pyNVML / nvidia-smi.
+5. **Functional Correctness (Pass@1)**: Validates that compressed prompts retain full answer correctness.
+
+### Running the Evaluation
+```bash
+# Ensure SmarterRouter is running on port 11436
+python benchmark.py --url http://localhost:11436 --iterations 3
+```
+
+---
+
 ## Future Sources
 
 We're evaluating additional benchmark sources:
@@ -240,4 +271,5 @@ We're evaluating additional benchmark sources:
 - **MT-Bench** - Multi-turn conversation benchmarks
 - **Custom internal benchmarks** - Enterprise users may want to add proprietary evaluations
 
-架构 allows easy addition of new `BenchmarkProvider` implementations. If you have a source you'd like to see supported, [open an issue](https://github.com/peva3/SmarterRouter/issues).
+The architecture allows easy addition of new `BenchmarkProvider` implementations. If you have a source you'd like to see supported, [open an issue](https://github.com/peva3/SmarterRouter/issues).
+

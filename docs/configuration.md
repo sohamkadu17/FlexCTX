@@ -3,8 +3,12 @@
 SmarterRouter is configured via environment variables in the `.env` file. This reference documents all available options.
 
 ## Table of Contents
+- [Hardware Presets](#hardware-presets)
+- [Dynamic Context Compression & DCA](#dynamic-context-compression--dca)
 - [Benchmark Data Sources](#benchmark-data-sources)
 - [Backend Provider Configuration](#backend-provider-configuration)
+- [External Cloud Providers](#external-cloud-providers)
+- [Long-Term Conversation Memory](#long-term-conversation-memory)
 - [Security Settings](#security-settings)
 - [Routing Configuration](#routing-configuration)
 - [Timeout Settings](#timeout-settings)
@@ -13,7 +17,85 @@ SmarterRouter is configured via environment variables in the `.env` file. This r
 - [VRAM Monitoring](#vram-monitoring)
 - [Monitoring & Logging](#monitoring--logging)
 - [Database](#database)
+- [Backend Resilience & DLQ](#backend-resilience)
 - [LLM-as-Judge](#llm-as-judge)
+- [Complete Example .env File](#complete-example-env-file)
+
+## Hardware Presets
+
+### `ROUTER_HARDWARE_PRESET`
+Pre-packaged optimization profiles calibrated for specific GPU VRAM configurations. Options:
+- `6GB_VRAM` (default): Caps VRAM budget at 5.8 GB, pins `qwen2.5:3b` as responsive baseline, allocates 8,192 DCA token context limit, and defaults unprofiled models to 2.5 GB.
+- `12GB_VRAM`: Caps VRAM budget at 11.5 GB, pins `Qwen2.5-Coder:7B`, allocates 16,384 DCA context limit.
+- `24GB_VRAM`: Caps VRAM budget at 23.0 GB, pins `llama3.1:latest`, allocates 32,768 DCA context limit.
+- `CUSTOM`: Manual tuning; disables preset overrides.
+
+---
+
+## Dynamic Context Compression & DCA
+
+### `ROUTER_COMPRESSION_ENABLED`
+Master toggle for the pre-flight context engineering and compression pipeline.
+
+**Default:** `true`
+
+### `ROUTER_COMPRESSION_MODE`
+Compression strategy:
+- `full` (default): Executes language scanning, Dynamic Context Allocation (DCA), cross-lingual arbitrage, AST chunking, BM25/entropy pruning, and prefix cache alignment.
+- `statistical_only`: Bypasses translation SLM; runs only AST chunking and lexical pruning.
+- `arbitrage_only`: Runs language scanning and micro-SLM translation without lexical pruning.
+- `cache_align_only`: Enforces prefix isolation and tool schema sorting without deleting prompt text.
+
+### `ROUTER_DCA_ENABLED`
+Enable Dynamic Context-Window Allocation with hysteresis dampening to prevent context boundary thrashing.
+
+**Default:** `true`
+
+### `ROUTER_DCA_TARGET_CONTEXT_LIMIT`
+Target context token ceiling allocated per request turn (default: `8192`).
+
+### `ROUTER_DCA_RESERVE_GENERATION_TOKENS`
+Headroom reserved for completion tokens to guarantee the model never runs out of context during generation (default: `2048`).
+
+### `ROUTER_ARBITRAGE_ENABLED`
+Enable Cross-Lingual Token Arbitrage (Pillar 1). When non-ASCII density exceeds `ROUTER_ARBITRAGE_MULTILINGUAL_THRESHOLD`, rewrites prompt into compact representation via a local micro-SLM.
+
+**Default:** `true`
+
+### `ROUTER_ARBITRAGE_MODEL`
+Micro-SLM model tag to use for multilingual compression (default: `qwen2.5:3b`).
+
+### `ROUTER_ARBITRAGE_MULTILINGUAL_THRESHOLD`
+Non-ASCII character ratio required to trigger translation (default: `0.15` = 15%). Purely English prompts bypass the SLM with sub-millisecond overhead.
+
+### `ROUTER_ARBITRAGE_DEVICE`
+Execution device for arbitrage SLM: `gpu` (default) or `cpu`.
+
+### `ROUTER_PRUNER_ENABLED`
+Enable Statistical Lexical Pruning (Pillar 2). Segment-level AST chunker scores each code and text block against the user query.
+
+**Default:** `true`
+
+### Pruner Scoring Weights
+- `ROUTER_PRUNER_BM25_WEIGHT` (default: `0.35`): Relevance of block terms to query.
+- `ROUTER_PRUNER_OVERLAP_WEIGHT` (default: `0.25`): Exact query token overlap.
+- `ROUTER_PRUNER_POSITION_WEIGHT` (default: `0.15`): Recency bias (favoring recent turns).
+- `ROUTER_PRUNER_ENTROPY_WEIGHT` (default: `0.15`): Information density and non-redundancy.
+- `ROUTER_PRUNER_INV_FILLER_WEIGHT` (default: `0.10`): Penalization of polite fluff and conversational filler.
+- `ROUTER_PRUNER_JACCARD_THRESHOLD` (default: `0.85`): Redundancy deduplication threshold.
+
+### `ROUTER_CACHE_ALIGN_ENABLED`
+Align prompt prefixes and sort tool function schemas alphabetically to maximize RadixAttention and Automatic Prefix Caching (APC) hit rates in llama.cpp and vLLM.
+
+**Default:** `true`
+
+### `ROUTER_CAR_ENABLED` & `ROUTER_CAR_MAX_ENTRIES`
+Content-Addressable Recovery (CAR). Caches pruned source blocks under SHA-256 handles so client agents can request original data if needed.
+
+**Default:** `true` (max 5,000 entries)
+
+---
+
 
 ## Benchmark Data Sources
 
@@ -138,7 +220,50 @@ Admin endpoint rate limit per client IP.
 
 **Default:** `10`
 
+### `ROUTER_ADMIN_ALLOWED_IPS`
+Comma-separated list of client IP addresses or CIDR blocks allowed to access `/admin/*` endpoints. If left empty, all IPs with valid Admin API key are permitted.
+
+**Example:** `ROUTER_ADMIN_ALLOWED_IPS=127.0.0.1,10.0.0.0/8,192.168.1.0/24`
+
+### `ROUTER_CORS_ORIGINS`
+Comma-separated list of allowed CORS origins. Set to `*` for open access or restrict to your UI origin:
+
+```env
+ROUTER_CORS_ORIGINS=http://localhost:3000,https://chat.example.com
+ROUTER_CORS_ALLOW_CREDENTIALS=false
+ROUTER_CORS_ALLOW_METHODS=GET,POST,PUT,DELETE,OPTIONS
+ROUTER_CORS_ALLOW_HEADERS=*
+ROUTER_CORS_MAX_AGE=600
+```
+
+### `ROUTER_PROMPT_INJECTION_DETECTION_ENABLED`
+Detect prompt injection and jailbreak patterns.
+
+**Default:** `true`
+
+### `ROUTER_PROMPT_INJECTION_ACTION`
+Action taken when prompt injection is detected: `log` (default), `warn` (inject warning in response), or `block` (reject with HTTP 400).
+
+### `ROUTER_MAX_REQUEST_BODY_BYTES` & `ROUTER_MAX_MESSAGE_CONTENT_LENGTH`
+Payload protection limits:
+- `ROUTER_MAX_REQUEST_BODY_BYTES` (default: `10485760` = 10MB)
+- `ROUTER_MAX_MESSAGE_CONTENT_LENGTH` (default: `100000` chars per message)
+
+### `ROUTER_ADMIN_AUDIT_ENABLED`
+Record all admin modifications, invalidations, and reprofile calls in SQLite `admin_audit_log`.
+
+**Default:** `true`
+
+### `ROUTER_CONTENT_MODERATION_ENABLED`
+Screen queries for harmful content categories (weapons, self-harm, illegal substances). Action can be `log` or `block`. Optional external webhook via `ROUTER_CONTENT_MODERATION_WEBHOOK_URL`.
+
+**Default:** `false`
+
+### `ROUTER_ENCRYPTION_KEY`
+Fernet symmetric key for encrypting stored external provider credentials in the database. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+
 ---
+
 
 ## Routing Configuration
 
@@ -232,12 +357,16 @@ Number of VRAM samples to take during profiling (averaged).
 
 **Default:** `3`
 
+### `ROUTER_PROFILE_PARALLEL_COUNT`
+Number of models to profile simultaneously (default: `1` = sequential). Set to `2` or `3` for multi-GPU systems or when small models easily fit in available VRAM.
+
 ### `ROUTER_PROFILE_ADAPTIVE_SAFETY_FACTOR`
 Safety factor for adaptive timeout calculation (default: 2.0 = conservative). Higher = more buffer, lower = more aggressive.
 
 **Default:** `2.0`
 
 ---
+
 
 ## Cache Configuration
 
@@ -307,6 +436,12 @@ Enable VRAM monitoring with auto-detection across all GPU vendors (NVIDIA, AMD, 
 Override auto-detected unified memory for Apple Silicon Macs. SmarterRouter estimates GPU memory as a percentage of system RAM (default: 75%). Set this to explicitly define the total GB available for GPU workloads on Apple Silicon.
 
 **Default:** (auto-detect as 75% of system RAM)
+
+### `ROUTER_AMD_UNIFIED_MEMORY_GB`
+Override auto-detected unified memory for AMD APUs (Ryzen AI, Radeon 780M/880M). APUs report a small BIOS VRAM carve-out (512MB-2GB) but access the larger system RAM via the GTT pool. SmarterRouter auto-detects GTT memory; set this if you wish to enforce an explicit limit (e.g., 90% of RAM).
+
+**Default:** (auto-detect from GTT pool)
+
 
 ### `ROUTER_VRAM_MONITOR_INTERVAL`
 VRAM sampling interval (seconds).
@@ -587,6 +722,18 @@ Initial retry delay in seconds (doubles on each retry).
 **Default:** `1.0`
 
 ---
+
+## Long-Term Conversation Memory
+
+SmarterRouter includes persistent conversational memory backed by an embedded SQLite vector store (`data/conversation_memory.db`).
+
+### How It Works
+- User and assistant conversation turns are vectorized and stored upon request completion.
+- Vectorization utilizes local Ollama embeddings (`ROUTER_EMBED_MODEL`) when reachable, with an instant deterministic in-process sub-millisecond hash vectorizer fallback.
+- On subsequent turns, the router retrieves semantically relevant historical context and injects it into the prompt.
+
+---
+
 
 ## Complete Example `.env` File
 

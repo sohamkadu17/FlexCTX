@@ -116,12 +116,13 @@ metadata:
   namespace: smarterrouter
 data:
   ROUTER_OLLAMA_URL: "http://ollama:11434"
-  ROUTER_PORT: "11434"
+  ROUTER_PORT: "11436"
   ROUTER_LOG_LEVEL: "INFO"
   ROUTER_BENCHMARK_SOURCES: "huggingface,lmsys"
   ROUTER_SIGNATURE_ENABLED: "true"
-  ROUTER_ENABLE_PROMPT_CACHING: "true"
-  ROUTER_ENABLE_RESPONSE_CACHING: "true"
+  ROUTER_CACHE_ENABLED: "true"
+  ROUTER_COMPRESSION_ENABLED: "true"
+  ROUTER_HARDWARE_PRESET: "CUSTOM"
 ```
 
 ### Secret
@@ -179,9 +180,9 @@ spec:
     spec:
       containers:
         - name: smarterrouter
-          image: smarterrouter/smarterrouter:2.2.0
+          image: ghcr.io/peva3/smarterrouter:latest
           ports:
-            - containerPort: 11434
+            - containerPort: 11436
               name: http
           envFrom:
             - configMapRef:
@@ -201,13 +202,13 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 11434
+              port: 11436
             initialDelaySeconds: 30
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /health
-              port: 11434
+              port: 11436
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
@@ -228,11 +229,12 @@ spec:
   selector:
     app: smarterrouter
   ports:
-    - port: 11434
-      targetPort: 11434
+    - port: 11436
+      targetPort: 11436
       name: http
   type: ClusterIP
 ```
+
 
 ### Ingress
 

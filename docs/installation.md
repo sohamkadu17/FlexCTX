@@ -54,9 +54,9 @@ docker-compose up -d
 ```
 
 This will:
-- Build the Docker image from GitHub Container Registry
+- Build the Docker image or pull from GitHub Container Registry
 - Start SmarterRouter on `http://localhost:11436`
-- Mount the database at `./router.db` for persistence
+- Mount `./data:/app/data` for persistent databases (profiles, benchmarks, vector memory, cache)
 
 ### 4. Verify Installation
 
@@ -71,6 +71,27 @@ INFO:     Starting router...
 INFO:     Profiling complete - X models ready
 ```
 
+---
+
+## Interactive Setup Wizard & CLI
+
+SmarterRouter includes a built-in CLI assistant:
+
+```bash
+# Automated hardware detection, backend probe, and interactive configuration
+smarterrouter setup
+
+# Pre-flight environment and backend diagnostic check
+smarterrouter check --config .env
+
+# Non-interactive configuration generation
+smarterrouter generate-env --output .env --overwrite
+```
+
+Or run programmatically via Python: `python -m router.cli check`.
+
+---
+
 ## Manual Installation
 
 ### 1. Clone Repository
@@ -83,8 +104,13 @@ cd SmarterRouter
 ### 2. Create Virtual Environment (Recommended)
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Linux / macOS
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Windows (PowerShell)
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 ```
 
 ### 3. Install Dependencies
@@ -100,20 +126,19 @@ cp ENV_DEFAULT .env
 nano .env
 ```
 
-At minimum, verify `ROUTER_OLLAMA_URL` points to your backend.
+Set your hardware preset (e.g., `ROUTER_HARDWARE_PRESET=6GB_VRAM` or `12GB_VRAM`) and verify `ROUTER_OLLAMA_URL` points to your backend.
 
 ### 5. Start the Server
 
 ```bash
+# Development mode (auto-reload)
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 11436
+
+# Production
 python -m uvicorn main:app --host 0.0.0.0 --port 11436
 ```
 
-**For production:** Use a production ASGI server like gunicorn:
-
-```bash
-pip install gunicorn
-gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:11436
-```
+---
 
 ## GPU Support
 
@@ -121,11 +146,11 @@ SmarterRouter supports automatic VRAM monitoring across multiple GPU vendors:
 
 | Vendor | Detection Method | Docker Support | Template |
 |--------|-----------------|----------------|----------|
-| NVIDIA | nvidia-smi | ✅ Full | [docker-compose.nvidia.yml](docker-compose.nvidia.yml) |
-| AMD | rocm-smi or sysfs | ✅ ROCm containers | [docker-compose.amd.yml](docker-compose.amd.yml) |
-| Intel Arc | sysfs (lmem) | ⚠️ Limited | [docker-compose.intel.yml](docker-compose.intel.yml) |
-| Apple Silicon | Unified memory | ❌ Run on host | [docker-compose.apple.md](docker-compose.apple.md) |
-| Multi-GPU | Combined detection | ✅ Mixed vendors | [docker-compose.multi-gpu.yml](docker-compose.multi-gpu.yml) |
+| NVIDIA | nvidia-smi | ✅ Full | [docker-compose.nvidia.yml](./docker-compose.nvidia.yml) |
+| AMD | rocm-smi or sysfs | ✅ ROCm containers | [docker-compose.amd.yml](./docker-compose.amd.yml) |
+| Intel Arc | sysfs (lmem) | ⚠️ Limited | [docker-compose.intel.yml](./docker-compose.intel.yml) |
+| Apple Silicon | Unified memory | ❌ Run on host | [docker-compose.apple.md](./docker-compose.apple.md) |
+| Multi-GPU | Combined detection | ✅ Mixed vendors | [docker-compose.multi-gpu.yml](./docker-compose.multi-gpu.yml) |
 
 **Quick Start:** Copy the appropriate template to your project root:
 ```bash
@@ -141,6 +166,7 @@ cp docs/docker-compose.intel.yml docker-compose.yml
 # For multi-GPU setups
 cp docs/docker-compose.multi-gpu.yml docker-compose.yml
 ```
+
 
 ### NVIDIA GPUs (Recommended)
 

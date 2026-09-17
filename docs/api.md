@@ -19,6 +19,73 @@ Admin endpoints require header: `Authorization: Bearer your-admin-api-key`
 
 ## Endpoints
 
+### Interactive Web UI Demo & Telemetry
+
+#### `GET /` or `GET /demo`
+
+Serves the built-in, real-time visual web dashboard with live GPU VRAM telemetry, Dynamic Context Allocation (DCA) state, and before/after prompt compression inspections.
+
+- **Content-Type:** `text/html; charset=utf-8`
+- **Authentication:** None (public demo UI)
+
+#### `GET /api/demo/telemetry`
+
+Fetches real-time hardware telemetry and pipeline statistics for the dashboard.
+
+**Response:**
+```json
+{
+  "vram": {
+    "used_gb": 4.1,
+    "total_gb": 6.0,
+    "free_gb": 1.9,
+    "utilization_pct": 68.4,
+    "device": "NVIDIA GeForce RTX 4050",
+    "models": ["qwen2.5:3b (Pinned)"]
+  },
+  "dca": {
+    "bucket": "4,096",
+    "mode": "📉 Nerf Mode (Hysteresis Active)"
+  },
+  "stats": {
+    "total_requests": 142,
+    "avg_tokens_saved_pct": 57.9,
+    "avg_latency_ms": 1.45
+  },
+  "memory": {
+    "total_memories_stored": 28,
+    "total_memories_recalled": 19
+  }
+}
+```
+
+#### `POST /api/demo/inspect`
+
+Pre-flight test harness to preview prompt compression transformations and token reduction without forwarding to inference models.
+
+**Request:**
+```json
+{
+  "prompt": "Here is a large context block with repeated imports and logs..."
+}
+```
+
+**Response:**
+```json
+{
+  "original_tokens": 1250,
+  "compressed_tokens": 520,
+  "token_savings_pct": 58.4,
+  "latency_ms": 1.82,
+  "category": "coding",
+  "compressed_prompt": "Cleaned and pruned context..."
+}
+```
+
+---
+
+### Core Compatibility Endpoints
+
 ### `GET /health`
 
 Health check endpoint with subsystem diagnostics.
@@ -30,11 +97,12 @@ Health check endpoint with subsystem diagnostics.
   "checks": {
     "database": {"status": "healthy", "details": "Database connection successful"},
     "backend": {"status": "healthy", "details": "Backend initialized"},
-    "gpu_monitor": {"status": "healthy", "details": {"gpus": [], "total_gb": 0.0, "used_gb": 0.0}},
+    "gpu_monitor": {"status": "healthy", "details": {"gpus": [], "total_gb": 6.0, "used_gb": 4.1}},
     "cache": {"status": "healthy", "details": {"backend": "memory"}},
-    "background_tasks": {"status": "healthy", "details": {"count": 3}}
+    "background_tasks": {"status": "healthy", "details": {"count": 3}},
+    "dlq": {"status": "healthy", "details": {"failed": 0, "retrying": 0, "dead": 0}}
   },
-  "version": "2.2.0",
+  "version": "2.2.7",
   "request_id": "req_abc123"
 }
 ```
@@ -59,7 +127,7 @@ Prometheus metrics endpoint for monitoring integration.
 
 ### `GET /v1/models`
 
-Returns the router itself as a single model.
+Returns the router itself as a virtual model plus any registered or discovered models.
 
 **Response:**
 ```json
@@ -77,13 +145,38 @@ Returns the router itself as a single model.
 }
 ```
 
+### `GET /v1/skills`
+
+Returns schemas and descriptions for all registered agent tools and skills available for function/tool calling.
+
+**Response:**
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "name": "calculate",
+      "description": "Evaluate math expressions",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "expression": {"type": "string"}
+        },
+        "required": ["expression"]
+      }
+    }
+  ]
+}
+```
+
 ### `POST /v1/chat/completions`
 
-Main chat completion endpoint. Compatible with OpenAI API format.
+Main chat completion endpoint. Fully compatible with OpenAI API format.
 
 **Request:**
 ```json
 {
+  "model": "smarterrouter/main",
   "messages": [
     {"role": "user", "content": "Write a Python function..."}
   ],
@@ -93,13 +186,15 @@ Main chat completion endpoint. Compatible with OpenAI API format.
 }
 ```
 
-**Streaming:** Set `"stream": true` for Server-Sent Events (SSE) format.
+**Features:**
+- **Dynamic Context Compression:** Automatically intercepts, scans, partitions (DCA), and prunes low-entropy prompt tokens.
+- **Long-Term Vector Memory:** When persistent conversation memory is active, relevant past turns from `data/conversation_memory.db` are recalled via cosine similarity and injected into context.
+- **Streaming:** Set `"stream": true` for Server-Sent Events (SSE) format.
+- **Rate limiting:** When enabled, chat uses a dedicated per-IP limit via `ROUTER_RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE` and returns HTTP `429` (`Rate limit exceeded`) when exceeded.
+- **Request timeout:** End-to-end request processing is bounded by `ROUTER_REQUEST_TIMEOUT_SECONDS` (default: 300s). Exceeded requests return HTTP `504` with a `timeout_error` payload.
+- **Error observability:** Structured error logs include correlation fields (`request_id`, `user_ip`, `model_name`, `prompt_hash`).
 
-**Rate limiting:** When enabled, chat uses a dedicated per-IP limit via `ROUTER_RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE` and returns HTTP `429` (`Rate limit exceeded`) when the threshold is exceeded.
-
-**Request timeout:** End-to-end request processing is bounded by a global timeout (`ROUTER_REQUEST_TIMEOUT_SECONDS`, enabled by default). If exceeded, the endpoint returns HTTP `504` with a `timeout_error` payload.
-
-**Error observability:** Failure paths on chat and related APIs emit structured error logs with correlation fields (`request_id`, `user_ip`, `model_name`, `prompt_hash`) when available, enabling easier tracing from API responses to backend logs.
+**Aliases:** `/chat/completions`, `/v1/responses`, `/responses`, `/v1/completions`, `/completions`.
 
 **Response:**
 ```json
@@ -126,7 +221,7 @@ Main chat completion endpoint. Compatible with OpenAI API format.
 }
 ```
 
-**Note:** The `model` field always returns `smarterrouter/main` as the router is the interface. The actual model used is appended to the response signature (see `ROUTER_SIGNATURE_ENABLED`).
+**Note:** The `model` field returns `smarterrouter/main` (or configured `ROUTER_EXTERNAL_MODEL_NAME`). The actual selected model is appended to the response signature when `ROUTER_SIGNATURE_ENABLED=true`.
 
 ### `POST /v1/embeddings`
 
@@ -140,36 +235,9 @@ Generate vector embeddings for text.
 }
 ```
 
-**Multiple inputs:**
-```json
-{
-  "model": "nomic-embed-text",
-  "input": ["text 1", "text 2", "text 3"]
-}
-```
-
-**Response:**
-```json
-{
-  "object": "list",
-  "data": [
-    {
-      "object": "embedding",
-      "embedding": [0.0123, -0.0456, ...],
-      "index": 0
-    }
-  ],
-  "model": "nomic-embed-text",
-  "usage": {
-    "prompt_tokens": 10,
-    "total_tokens": 10
-  }
-}
-```
-
 ### `POST /v1/feedback`
 
-Submit user feedback to improve routing decisions.
+Submit user feedback to refine future routing decisions.
 
 **Request:**
 ```json
@@ -182,245 +250,95 @@ Submit user feedback to improve routing decisions.
 
 **Parameters:**
 - `response_id` (required): Response ID from chat completion
-- `score` (required): Float 0.0-2.0 where:
-  - 0.0 = poor quality
-  - 1.0 = acceptable/expected
-  - 2.0 = exceptional/exceeded expectations
+- `score` (required): Float 0.0-2.0 (0.0 = poor, 1.0 = acceptable, 2.0 = exceptional)
 - `comment` (optional): Text feedback
-
-**Response:** `200 OK` on success
 
 ---
 
 ## Admin Endpoints (Require Authentication)
 
-All admin endpoints require `Authorization: Bearer your-admin-api-key` header.
+All admin endpoints require `Authorization: Bearer <ROUTER_ADMIN_API_KEY>` header.
+
+### `GET /admin/stats`
+
+Overall system diagnostics summary: uptime, total requests, active cache size, loaded models, and DLQ status.
 
 ### `GET /admin/profiles`
 
-View performance profiles of all models.
-
-**Query params:**
-- `limit` (default 1000)
-- `offset` (legacy pagination, ignored when `cursor` is set)
-- `cursor` (cursor-based pagination; returns rows with `name > cursor`)
-
-**Response:**
-```json
-{
-  "cursor": null,
-  "next_cursor": "llama3:70b",
-  "offset": 0,
-  "limit": 100,
-  "profiles": [
-    {
-      "model_name": "llama3:70b",
-      "reasoning_score": 0.94,
-      "coding_score": 0.87,
-      "creativity_score": 0.78,
-      "speed_score": 0.34,
-      "vram_required_gb": 42.5,
-      "last_profiled": "2024-02-20T10:30:00Z",
-      "profiling_status": "completed"
-    }
-  ]
-}
-```
+View local performance profiles of all models with pagination (`limit`, `offset`, `cursor`).
 
 ### `GET /admin/benchmarks`
 
-View aggregated benchmark data from external sources (HuggingFace, LMSYS).
+View aggregated benchmark data (MMLU, HumanEval, Math, GPQA) from HuggingFace, LMSYS, or provider.db. Query params: `model`, `limit`, `offset`, `cursor`.
 
-**Query params:**
-- `?model=llama3:70b` - Filter to specific model
-- `?limit=100` - Page size
-- `?offset=0` - Legacy offset mode (ignored when `cursor` is set)
-- `?cursor=llama3:8b` - Cursor mode (returns rows with `ollama_name > cursor`)
+### `POST /admin/reprofile` or `POST /admin/models/reprofile`
 
-**Response:**
-```json
-{
-  "cursor": null,
-  "next_cursor": "llama3:70b",
-  "offset": 0,
-  "limit": 100,
-  "benchmarks": [
-    {
-      "ollama_name": "llama3:70b",
-      "mmlu_score": 0.82,
-      "gpqa_score": 0.58,
-      "humaneval_score": 0.78,
-      "math_500_score": 0.85
-    }
-  ]
-}
-```
+Trigger manual model reprofiling. Query params: `force=true`, `models=llama3:8b,codellama:34b`.
 
-### `POST /admin/reprofile`
+### `POST /admin/models/refresh`
 
-Trigger manual reprofiling of models.
+Trigger immediate background model discovery and hot-swap against inference backends.
 
-**Query params:**
-- `?force=true` - Reprofile all models, even if already profiled
-- `?models=llama3:70b,codellama:34b` - Specific models only
+### `POST /admin/sync-benchmarks`
 
-**Response:**
-```json
-{
-  "message": "Reprofiling started for 3 models",
-  "task_id": "abc123",
-  "check_status": "/admin/profiling_status/abc123"
-}
-```
+Trigger immediate background benchmark synchronization with configured sources.
 
-### `GET /admin/dlq`
+### `GET /admin/compression/stats`
 
-List dead-letter-queue entries for failed background tasks.
-
-**Query params:**
-- `status` (optional): `failed`, `retrying`, `dead`, or `resolved`
-- `limit` (default `50`, max `200`)
-- `offset` (default `0`)
-
-**Response:**
+Real-time telemetry and metrics summary from the Pre-Flight Dynamic Context Compression Pipeline:
 ```json
 {
   "enabled": true,
-  "total": 2,
-  "limit": 50,
-  "offset": 0,
-  "status": "failed",
-  "entries": [
-    {
-      "id": 12,
-      "task_name": "benchmark_sync",
-      "status": "failed",
-      "attempts": 1,
-      "max_retries": 3,
-      "error_message": "timeout calling provider",
-      "payload": {"source": "huggingface"},
-      "created_at": "2026-03-16T10:15:00+00:00",
-      "last_attempt_at": "2026-03-16T10:16:00+00:00",
-      "next_retry_at": "2026-03-16T10:17:00+00:00",
-      "resolved_at": null
-    }
-  ]
-}
-```
-
-### `POST /admin/dlq/retry/{entry_id}`
-
-Manually retry a specific DLQ entry.
-
-**Response:**
-```json
-{
-  "entry_id": 12,
-  "success": true,
-  "status": "resolved",
-  "attempts": 2,
-  "next_retry_at": null
-}
-```
-
-### `GET /admin/profiling_status/{task_id}`
-
-Check status of a profiling task.
-
-**Response:**
-```json
-{
-  "task_id": "abc123",
-  "status": "running",
-  "progress": {
-    "total": 5,
-    "completed": 2,
-    "current_model": "codellama:34b"
-  },
-  "estimated_completion": "2024-02-20T15:30:00Z"
+  "mode": "full",
+  "total_requests": 142,
+  "original_tokens_sum": 384000,
+  "compressed_tokens_sum": 161600,
+  "avg_token_savings_pct": 57.9,
+  "avg_latency_ms": 1.45,
+  "dca_current_limit": 8192,
+  "car_cache_size": 240
 }
 ```
 
 ### `GET /admin/vram`
 
-View real-time VRAM usage and model memory allocation.
-
-**Response:**
-```json
-{
-  "total_gb": 23.8,
-  "used_gb": 18.2,
-  "free_gb": 5.6,
-  "utilization_pct": 76.5,
-  "gpus": [
-    {
-      "index": 0,
-      "total_gb": 23.8,
-      "used_gb": 18.2,
-      "free_gb": 5.6
-    }
-  ],
-  "loaded_models": [
-    {
-      "model_name": "llama3:70b",
-      "vram_used_gb": 42.5,
-      "loaded_at": "2024-02-20T10:15:00Z",
-      "last_used": "2024-02-20T14:30:00Z"
-    }
-  ],
-  "warnings": [
-    "VRAM utilization above 75% threshold"
-  ]
-}
-```
-
-### `POST /admin/cache/invalidate`
-
-Invalidate cache entries.
-
-**Query params:**
-- `?type=routing` - Clear routing cache only
-- `?type=response` - Clear response cache only
-- `?all=true` - Clear all caches (default)
-
-**Response:**
-```json
-{
-  "message": "Cache invalidated",
-  "cleared": {
-    "routing_entries": 45,
-    "response_entries": 23
-  }
-}
-```
+View real-time GPU VRAM usage, detected GPUs, per-model memory allocations, and eviction warnings.
 
 ### `GET /admin/explain`
 
-Explain routing decision for a given prompt.
+Detailed scoring breakdown and model selection explanation for a given prompt. Query params: `prompt` (required), `category` (optional override).
 
-**Query params:**
-- `?prompt=Your prompt here` (required)
-- `?category=...` - Override category detection
+### `GET /admin/cache/stats/detailed`
 
-**Response:**
-```json
-{
-  "prompt": "Write a Python function for binary search",
-  "detected_category": "coding",
-  "complexity": 0.42,
-  "selected_model": "codellama:34b",
-  "scores": {
-    "capability_score": 0.87,
-    "benchmark_score": 0.81,
-    "speed_score": 0.65,
-    "final_score": 0.82
-  },
-  "alternatives_considered": [
-    {"model": "llama3:70b", "score": 0.76, "rejected_reason": "Too slow"},
-    {"model": "phi3:mini", "score": 0.45, "rejected_reason": "Below minimum size"}
-  ]
-}
-```
+Detailed cache statistics with hit/miss breakdowns across exact hash, semantic similarity, and response caches.
+
+### `POST /admin/cache/invalidate`
+
+Invalidate cache entries (`?type=routing`, `?type=response`, or `?all=true`).
+
+### `POST /admin/cache/clear`
+
+Completely flush all in-memory, persistent, and Redis cache tiers.
+
+### `POST /admin/cache/warm`
+
+Pre-warm cache for popular queries and benchmark prompts.
+
+### `POST /admin/cache/evict`
+
+Force cache eviction based on LRU policy.
+
+### `GET /admin/dlq`
+
+List Dead Letter Queue entries for failed background operations (`?status=failed|retrying|dead|resolved`, `limit`, `offset`).
+
+### `POST /admin/dlq/retry/{entry_id}`
+
+Manually re-dispatch and retry a specific failed DLQ entry.
+
+### `GET /admin/audit-log`
+
+Query administrative action audit logs recorded in SQLite (`?limit=50`, `?action=...`, `?user_ip=...`).
 
 ---
 
@@ -428,45 +346,45 @@ Explain routing decision for a given prompt.
 
 | HTTP Status | Meaning | Common Causes |
 |-------------|---------|---------------|
-| 200 | Success | - |
-| 400 | Bad Request | Invalid JSON, missing required fields |
-| 401 | Unauthorized | Invalid/missing admin API key |
-| 404 | Not Found | Endpoint doesn't exist |
-| 429 | Too Many Requests | Rate limit exceeded |
-| 500 | Internal Server Error | Backend failure, model load error |
-| 503 | Service Unavailable | Backend not connected, all models failed |
+| 200 | Success | Request succeeded |
+| 400 | Bad Request | Invalid JSON, missing parameters, payload exceeding limits |
+| 401 | Unauthorized | Missing or invalid `ROUTER_ADMIN_API_KEY` |
+| 403 | Forbidden | Client IP not allowed by `ROUTER_ADMIN_ALLOWED_IPS` |
+| 404 | Not Found | Unknown endpoint or missing resource |
+| 429 | Too Many Requests | Rate limit exceeded (`Retry-After` header included) |
+| 500 | Internal Server Error | Unexpected failure in backend or router |
+| 503 | Service Unavailable | Backend offline, or circuit breaker is OPEN |
+| 504 | Gateway Timeout | Total processing exceeded `ROUTER_REQUEST_TIMEOUT_SECONDS` |
 
 ## Rate Limits
 
-- **General endpoints:** 60 requests/minute per IP (configurable)
-- **Admin endpoints:** 10 requests/minute per IP (configurable)
-- **Chat completions:** Also limited by backend provider rate limits
-
-Rate limit exceeded responses include `Retry-After` header with seconds to wait.
+- **General endpoints:** `ROUTER_RATE_LIMIT_REQUESTS_PER_MINUTE` (default: 60/min)
+- **Chat completions:** `ROUTER_RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE` (default: 100/min)
+- **Admin endpoints:** `ROUTER_RATE_LIMIT_ADMIN_REQUESTS_PER_MINUTE` (default: 10/min)
 
 ## CORS
 
-CORS is disabled by default. To enable for specific origins, set `ROUTER_CORS_ALLOWED_ORIGINS` in `.env`:
+CORS is configured via `ROUTER_CORS_ORIGINS` in `.env`:
 
-```
-ROUTER_CORS_ALLOWED_ORIGINS=http://localhost:3000,https://myapp.example.com
+```env
+ROUTER_CORS_ORIGINS=http://localhost:3000,https://myapp.example.com
+ROUTER_CORS_ALLOW_CREDENTIALS=false
+ROUTER_CORS_ALLOW_METHODS=GET,POST,PUT,DELETE,OPTIONS
+ROUTER_CORS_ALLOW_HEADERS=*
+ROUTER_CORS_MAX_AGE=600
 ```
 
 ---
 
 ## Client Compatibility
 
-SmarterRouter is compatible with any OpenAI client library that supports:
-- `/v1/chat/completions` endpoint
-- `/v1/models` endpoint
-- Optional: `/v1/embeddings` endpoint
+SmarterRouter is compatible with any OpenAI client library:
+- **OpenAI Python SDK** (`base_url="http://localhost:11436/v1"`)
+- **OpenAI Node / TypeScript SDK** (`@ai-sdk/openai-compatible`)
+- **OpenCode IDE** (`opencode.json` configuration)
+- **OpenWebUI** (v0.2+)
+- **Continue** & **Cursor** extensions
+- **SillyTavern** & general chat UIs
 
-**Tested with:**
-- OpenAI Python SDK
-- OpenWebUI (v0.2+)
-- Continue (VS Code extension)
-- Cursor IDE
-- SillyTavern
-- custom applications
+The virtual model name is `smarterrouter/main`. Model selection is transparent to the client.
 
-**Important:** The router presents itself as a single model (`smarterrouter/main`) to simplify frontend integration. The actual model selection is transparent to the client.

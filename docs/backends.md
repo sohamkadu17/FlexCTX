@@ -69,7 +69,8 @@ ROUTER_OLLAMA_URL=http://localhost:11434
 
 ```env
 ROUTER_PROVIDER=llama.cpp
-ROUTER_OLLAMA_URL=http://localhost:8080  # llama.cpp server URL
+ROUTER_LLAMA_CPP_URL=http://localhost:8080
+# ROUTER_OLLAMA_URL can also be used as fallback
 ```
 
 ### Advantages
@@ -82,6 +83,7 @@ ROUTER_OLLAMA_URL=http://localhost:8080  # llama.cpp server URL
 
 - **No explicit model unloading** - llama.cpp server loads models into memory; unloading returns `False` gracefully but models stay loaded
 - **Manual model management** - You manage server instances; SmarterRouter can't load/unload dynamically
+
 
 ### Tips
 

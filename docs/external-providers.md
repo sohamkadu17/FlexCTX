@@ -110,7 +110,7 @@ For setups that only use external providers (no local Ollama):
 version: '3.8'
 services:
   smarterrouter:
-    image: smarterrouter:latest
+    image: ghcr.io/peva3/smarterrouter:latest
     container_name: smarterrouter
     ports:
       - "11436:11436"
@@ -122,9 +122,10 @@ services:
       - ROUTER_OPENAI_API_KEY=${OPENAI_API_KEY}
       - ROUTER_ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ROUTER_GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - ROUTER_DATABASE_URL=sqlite:////app/data/router.db
     volumes:
-      - ./data:/app/hubrouter/data
-      - ./logs:/app/hubrouter/logs
+      - ./.env:/app/.env:rw
+      - ./data:/app/data:rw
     restart: unless-stopped
 ```
 
@@ -133,6 +134,22 @@ Run with:
 ```bash
 docker-compose -f docker-compose.external.yml up -d
 ```
+
+## Credential Encryption (Fernet)
+
+For production deployments, external provider API keys stored or cached in database tables can be symmetrically encrypted at rest:
+
+```bash
+# Generate key
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Add to `.env`:
+```env
+ROUTER_ENCRYPTION_KEY=your-generated-fernet-key
+```
+
+When set, SmarterRouter encrypts stored keys with the `enc:` prefix using PBKDF2 HMAC-SHA256 derivation.
 
 ## Provider.db Auto-Update
 
@@ -145,6 +162,7 @@ ROUTER_PROVIDER_DB_AUTO_UPDATE_HOURS=4
 # Download URL (advanced users)
 ROUTER_PROVIDER_DB_DOWNLOAD_URL=https://raw.githubusercontent.com/peva3/smarterrouter-provider/refs/heads/main/data/provider.db
 ```
+
 
 ## Troubleshooting
 

@@ -435,7 +435,7 @@ curl http://localhost:11436/admin/vram | jq .
 
 Look for:
 - `loaded_models` array showing which models are in memory
-- `utilization_pct`接近 100%
+- `utilization_pct` approaching 100%
 - `warnings` array
 
 **Fix:**
@@ -559,6 +559,97 @@ logs/detailed_logs/<timestamp>/
 ├── streaming_chunks.jsonl # SSE chunks if streaming
 └── metadata.json         # Timing, model selected, scores
 ```
+
+---
+
+## Context Compression & Token Pruning Issues
+
+### "Important code/tokens removed by pruner"
+
+**Symptom:** Code missing syntax or parameters after pre-flight compression.
+
+**Solution:**
+1. Check `force_keep.py` safety gates: SmarterRouter automatically protects API keys, file paths, and syntax boundaries.
+2. If custom keywords or tokens must never be pruned, set `ROUTER_COMPRESSION_MODE=cache_align_only` to keep all prompt content intact while retaining prefix cache alignment and tool schema sorting.
+3. Verify test reductions using `POST /api/demo/inspect` before sending live agent traffic.
+
+### "Arbitrage SLM taking too long on non-English queries"
+
+**Symptom:** Multilingual prompts experience 500ms+ latency during cross-lingual token arbitrage.
+
+**Solution:**
+1. Set `ROUTER_ARBITRAGE_DEVICE=gpu` to ensure the micro-SLM runs on GPU rather than CPU.
+2. If running on low VRAM, switch to statistical pruning only: `ROUTER_COMPRESSION_MODE=statistical_only` or disable arbitrage: `ROUTER_ARBITRAGE_ENABLED=false`.
+
+---
+
+## Vector Conversation Memory Issues
+
+### "Database is locked" on `conversation_memory.db`
+
+**Symptom:** SQLite concurrency warnings under heavy parallel load.
+
+**Solution:**
+1. In high-concurrency environments, ensure WAL mode is active:
+   ```bash
+   sqlite3 data/conversation_memory.db "PRAGMA journal_mode=WAL;"
+   ```
+2. Verify that the `./data` directory has read-write permissions for the user executing the container (`chown -R 1000:1000 ./data`).
+
+### "Embedding generation timeout / fallback used"
+
+**Symptom:** Logs show `Fall back to instant deterministic in-process hash vector`.
+
+**Solution:**
+1. This is graceful self-healing behavior: if Ollama is busy generating tokens or `nomic-embed-text` is not loaded, the router falls back to sub-millisecond hash vectorization (<0.05ms) without dropping the request.
+2. To use dense vector embeddings, pre-pull the model: `ollama pull nomic-embed-text`.
+
+---
+
+## Resilience, Circuit Breaker & DLQ Issues
+
+### "503 Service Unavailable (Circuit Breaker OPEN)"
+
+**Symptom:** Requests to a backend fail immediately with 503 without attempting network connections.
+
+**Solution:**
+1. The circuit breaker tripped because the backend failed consecutively `ROUTER_BACKEND_CIRCUIT_BREAKER_FAILURE_THRESHOLD` times (default: 5).
+2. The circuit will automatically enter `HALF_OPEN` state after `ROUTER_BACKEND_CIRCUIT_BREAKER_RESET_TIMEOUT` seconds (default: 60s) to probe backend health.
+3. Check backend connectivity (`curl http://localhost:11434/api/tags`).
+4. To reset immediately, restart the router or adjust failure thresholds in `.env`.
+
+### "Dead tasks in DLQ"
+
+**Symptom:** `checks.dlq` in `GET /health` reports dead background jobs.
+
+**Solution:**
+1. Inspect dead tasks via admin API:
+   ```bash
+   curl -H "Authorization: Bearer $ROUTER_ADMIN_API_KEY" http://localhost:11436/admin/dlq?status=dead
+   ```
+2. Retry a specific failed job:
+   ```bash
+   curl -X POST -H "Authorization: Bearer $ROUTER_ADMIN_API_KEY" http://localhost:11436/admin/dlq/retry/<entry_id>
+   ```
+
+---
+
+## provider.db & External Provider Issues
+
+### "Provider DB degraded / stale fallback active"
+
+**Symptom:** `/health` shows `provider_db: degraded` or warnings about provider.db staleness.
+
+**Solution:**
+1. SmarterRouter serves cached benchmarks without interrupting inference routing when provider.db is updating or slow (`ROUTER_DB_SLOW_FALLBACK_ENABLED=true`).
+2. Force a refresh using the script:
+   ```bash
+   bash scripts/download_provider_db.sh
+   ```
+3. Or manually trigger sync via admin endpoint:
+   ```bash
+   curl -X POST -H "Authorization: Bearer $ROUTER_ADMIN_API_KEY" http://localhost:11436/admin/sync-benchmarks
+   ```
 
 ---
 
