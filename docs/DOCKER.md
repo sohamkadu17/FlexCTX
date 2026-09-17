@@ -175,8 +175,8 @@ services:
       - ROUTER_ADMIN_API_KEY=${ROUTER_ADMIN_API_KEY}
       
       # Volume mounts
-      - ./data:/app/hubrouter/data
-      - ./logs:/app/hubrouter/logs
+      - ./data:/app/data
+      - ./logs:/app/logs
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11436/health"]

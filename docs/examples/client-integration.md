@@ -38,7 +38,7 @@ response = client.chat.completions.create(
 )
 
 print(response.choices[0].message.content)
-print(f"Model used: {response.model}")  # Always 'smarterrouter/main'
+print(f"Router model name: {response.model}")  # Configured by ROUTER_EXTERNAL_MODEL_NAME
 # Check response signature or use /admin/explain to see actual model
 ```
 

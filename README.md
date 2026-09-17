@@ -2,6 +2,8 @@
 
 **An intelligent, OpenAI-compatible FastAPI gateway that automatically selects the best language model for every request.**
 
+> **Current release:** `2.1.5` in package metadata. The FastAPI application currently reports `2.2.7`; this existing mismatch is recorded in [docs/README.md](docs/README.md).
+
 SmarterRouter sits in front of local inference backends (Ollama, llama.cpp) or any OpenAI-compatible endpoint—including cloud providers like OpenAI, Anthropic, Google, Cohere, and Mistral—and routes each request to the most appropriate model. Clients send requests to a single stable endpoint instead of choosing and managing models themselves.
 
 The router combines **prompt analysis**, **model capability detection**, **local performance profiles**, **benchmark data from HuggingFace/LMSYS/ArtificialAnalysis**, **user feedback**, **VRAM availability**, **multi-layered caching**, and **backend health monitoring** to make intelligent routing decisions in real time.
@@ -237,7 +239,7 @@ smarterrouter --help
 
 ## Configuration
 
-Configuration uses **Pydantic Settings**. All variables use the `ROUTER_` prefix and can be set via environment variables or a `.env` file. Copy [ENV_DEFAULT](ENV_DEFAULT) as the starting point — it is the complete annotated template with all available settings.
+Configuration uses **Pydantic Settings**. All variables use the `ROUTER_` prefix and can be set via environment variables or a `.env` file. Copy [ENV_DEFAULT](ENV_DEFAULT) as the starting point. The settings model in [router/config.py](router/config.py) is authoritative when a template comment and runtime behavior differ.
 
 ### Minimum Configuration
 
@@ -263,7 +265,7 @@ ROUTER_ADMIN_API_KEY=replace-with-a-long-random-secret
 | `ROUTER_HOST` / `ROUTER_PORT` | Bind address and port | `0.0.0.0` / `11436` |
 | `ROUTER_QUALITY_PREFERENCE` | `0.0` = speed, `1.0` = quality | `0.5` |
 | `ROUTER_MODEL` | Small model for LLM-based dispatch | — |
-| `ROUTER_PINNED_MODEL` | Model to keep loaded permanently (auto-pinned by preset) | `qwen2.5:3b` |
+| `ROUTER_PINNED_MODEL` | Model to keep loaded permanently; presets supply one when unset | `qwen2.5:3b` with the default preset |
 | `ROUTER_MODEL_KEEP_ALIVE` | Backend keep-alive seconds; `-1` = indefinitely | `-1` |
 | `ROUTER_CASCADING_ENABLED` | Retry with next-best model on failure | `true` |
 | `ROUTER_GENERATION_TIMEOUT` | Backend generation timeout (seconds) | `120` |
@@ -301,15 +303,11 @@ Mix cloud models with local models:
 
 ```env
 ROUTER_PROVIDER=ollama
-ROUTER_EXTERNAL_PROVIDERS_ENABLED=true
-ROUTER_EXTERNAL_PROVIDERS=openai,anthropic,google
-
+ROUTER_OPENAI_BASE_URL=https://api.openai.com/v1
 ROUTER_OPENAI_API_KEY=sk-...
-ROUTER_ANTHROPIC_API_KEY=sk-ant-...
-ROUTER_GOOGLE_API_KEY=...
 ```
 
-External models use provider prefixes: `openai/gpt-4o`, `anthropic/claude-3-opus`, `google/gemini-1.5-pro`. The router uses `provider.db` (auto-downloaded every 4 hours) to look up benchmark scores for 400+ external models.
+Set `ROUTER_EXTERNAL_PROVIDERS_ENABLED=true` and list providers in `ROUTER_EXTERNAL_PROVIDERS`. Provider API keys and optional base URLs are configured with the corresponding `ROUTER_*` settings. For an OpenAI-compatible upstream, also set `ROUTER_OPENAI_BASE_URL` and `ROUTER_OPENAI_API_KEY`.
 
 See [docs/external-providers.md](docs/external-providers.md) for full provider-specific settings.
 
@@ -404,6 +402,7 @@ All admin endpoints require `Authorization: Bearer <ROUTER_ADMIN_API_KEY>`.
 | `/admin/benchmarks` | GET | View aggregated benchmark data. |
 | `/admin/reprofile` | POST | Trigger manual model reprofiling. |
 | `/admin/models/refresh` | POST | Trigger immediate background model discovery and hot-swap. |
+| `/admin/models/reprofile` | POST | Reprofile a selected model. |
 | `/admin/sync-benchmarks` | POST | Trigger immediate background benchmark sync. |
 | `/admin/compression/stats` | GET | Pre-flight dynamic context compression metrics and token savings summary. |
 | `/admin/explain` | GET/POST | Detailed scoring breakdown and selection rationale for a prompt. |
