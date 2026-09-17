@@ -95,21 +95,28 @@ Health check endpoint with subsystem diagnostics.
 {
   "status": "healthy",
   "checks": {
-    "database": {"status": "healthy", "details": "Database connection successful"},
-    "backend": {"status": "healthy", "details": "Backend initialized"},
-    "gpu_monitor": {"status": "healthy", "details": {"gpus": [], "total_gb": 6.0, "used_gb": 4.1}},
-    "cache": {"status": "healthy", "details": {"backend": "memory"}},
-    "background_tasks": {"status": "healthy", "details": {"count": 3}},
-    "dlq": {"status": "healthy", "details": {"failed": 0, "retrying": 0, "dead": 0}}
+    "database": "ok",
+    "backend": "initialized",
+    "gpu": {
+      "total_gb": 6.0,
+      "used_gb": 4.1,
+      "free_gb": 1.9,
+      "vendor": "NVIDIA"
+    },
+    "cache": "memory (ok)",
+    "background_tasks": 3,
+    "dlq": {
+      "failed": 0,
+      "retrying": 0,
+      "dead": 0
+    }
   },
   "version": "2.2.7",
   "request_id": "req_abc123"
 }
 ```
 
-**Provider DB note:** `checks.database.details.provider_db` includes `available`, `degraded`, and `stale` indicators so operators can detect when provider benchmark data is temporarily serving fallback behavior.
-
-**DLQ note:** When DLQ is enabled, `checks.dlq` includes aggregate counts for `failed`, `retrying`, and `dead` background jobs.
+**Notes:** health data is intentionally concise and is produced by the live runtime state in the router. The `gpu` value is either a metrics object or a status string, and the `database` and `backend` checks are simple status strings rather than nested detailed objects.
 
 ### `GET /metrics`
 
@@ -147,24 +154,15 @@ Returns the router itself as a virtual model plus any registered or discovered m
 
 ### `GET /v1/skills`
 
-Returns schemas and descriptions for all registered agent tools and skills available for function/tool calling.
+Returns the names of all registered skills available for tool/function calling.
 
 **Response:**
 ```json
 {
-  "object": "list",
-  "data": [
-    {
-      "name": "calculate",
-      "description": "Evaluate math expressions",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "expression": {"type": "string"}
-        },
-        "required": ["expression"]
-      }
-    }
+  "skills": [
+    "calculate",
+    "search",
+    "fetch"
   ]
 }
 ```
@@ -250,7 +248,7 @@ Submit user feedback to refine future routing decisions.
 
 **Parameters:**
 - `response_id` (required): Response ID from chat completion
-- `score` (required): Float 0.0-2.0 (0.0 = poor, 1.0 = acceptable, 2.0 = exceptional)
+- `score` (required): Float in the validated range `[-1.0, 1.0]` (`-1.0` = poor, `0.0` = neutral, `1.0` = excellent)
 - `comment` (optional): Text feedback
 
 ---

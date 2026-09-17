@@ -182,13 +182,9 @@ Works with OpenAI, Anthropic (via compatibility layer), vLLM, TGI, LiteLLM, or a
 ## Security Settings
 
 ### `ROUTER_ADMIN_API_KEY` ⚠️ REQUIRED FOR PRODUCTION
-Authentication key for admin endpoints (`/admin/*`). 
+Authentication key for admin endpoints (`/admin/*`).
 
-**⚠️ SECURITY WARNING:** Leaving this empty makes admin endpoints publicly accessible, exposing:
-- Full model performance profiles
-- VRAM monitoring data
-- Cache management
-- Reprofile controls
+**⚠️ SECURITY WARNING:** If this is not set, the router rejects admin access instead of allowing anonymous access to privileged routes.
 
 **Generate a secure key:**
 ```bash
@@ -196,7 +192,7 @@ openssl rand -hex 32
 # Copy output to .env: ROUTER_ADMIN_API_KEY=sk-smarterrouter-<output>
 ```
 
-**Default:** (empty - **insecure**)
+**Default:** `None` (admin endpoints are disabled unless a key is configured)
 
 ### `ROUTER_RATE_LIMIT_ENABLED`
 Enable rate limiting to prevent abuse and DoS attacks.
