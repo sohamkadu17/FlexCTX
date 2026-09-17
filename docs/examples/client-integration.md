@@ -4,6 +4,8 @@ Learn how to integrate SmarterRouter with various AI applications and frameworks
 
 ## Table of Contents
 - [Python OpenAI SDK](#python-openai-sdk)
+- [JavaScript / TypeScript (Node.js)](#javascript--typescript-nodejs)
+- [OpenCode IDE Integration](#opencode-ide-integration)
 - [curl](#curl)
 - [OpenWebUI](#openwebui)
 - [VS Code Extensions (Continue, Cursor)](#vs-code-extensions)
@@ -11,6 +13,7 @@ Learn how to integrate SmarterRouter with various AI applications and frameworks
 - [Anthropic SDK](#anthropic-sdk)
 
 SmarterRouter is compatible with any OpenAI-compatible client. See the [API Reference](../api.md) for full details.
+
 
 ---
 
@@ -40,6 +43,77 @@ print(f"Model used: {response.model}")  # Always 'smarterrouter/main'
 ```
 
 ---
+
+## JavaScript / TypeScript (Node.js)
+
+### Using the Official OpenAI SDK
+```javascript
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  baseURL: "http://localhost:11436/v1",
+  apiKey: "dummy-key", // Not required by SmarterRouter but expected by the SDK
+});
+
+const completion = await openai.chat.completions.create({
+  model: "smarterrouter/main",
+  messages: [{ role: "user", content: "Explain merge sort in two sentences." }],
+});
+
+console.log(completion.choices[0].message.content);
+```
+
+### Using Vercel AI SDK (`@ai-sdk/openai-compatible`)
+```typescript
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { generateText } from "ai";
+
+const smarterrouter = createOpenAICompatible({
+  name: "smarterrouter",
+  baseURL: "http://localhost:11436/v1",
+  apiKey: "dummy",
+});
+
+const { text } = await generateText({
+  model: smarterrouter("smarterrouter/main"),
+  prompt: "What is the capital of France?",
+});
+
+console.log(text);
+```
+
+---
+
+## OpenCode IDE Integration
+
+SmarterRouter natively supports OpenCode IDE via [opencode.json](../../opencode.json):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "smarterrouter": {
+      "name": "SmarterRouter",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://localhost:11436/v1",
+        "apiKey": "admin123"
+      },
+      "models": {
+        "smarterrouter/main": {
+          "name": "SmarterRouter (VRAM Adaptive & Compressed)"
+        },
+        "qwen2.5:3b": {
+          "name": "Qwen 2.5 3B"
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
 
 ## curl
 

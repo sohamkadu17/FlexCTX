@@ -52,15 +52,18 @@ The router combines **prompt analysis**, **model capability detection**, **local
 | Category | Capabilities |
 | :--- | :--- |
 | **Intelligent Routing** | Prompt complexity analysis · task categorization (coding, reasoning, creativity, factual) · model scoring with quality-vs-speed tuning (`ROUTER_QUALITY_PREFERENCE`) · modality-aware routing (vision, tool calling, embeddings) · fallback cascades on failure |
+| **Context Compression** | Pre-flight compression pipeline · selective cross-lingual token arbitrage · AST-aware code chunking · BM25 + entropy statistical pruning · dynamic context-window allocation (DCA) · prefix cache alignment (RadixAttention/APC compatible) · −57.9% tokens |
+| **Vector Memory** | Long-term conversation memory backed by SQLite vector store (`conversation_memory.db`) · cosine similarity recall · automated prompt context injection · sub-millisecond in-process hash vectorizer fallback |
+| **Visual Web Demo** | Interactive real-time web dashboard (`GET /` and `/demo`) · live GPU VRAM telemetry · DCA hysteresis state · pre-flight before/after prompt inspection harness |
 | **Backend Support** | Ollama (model load/unload, discovery) · llama.cpp · any OpenAI-compatible API · external cloud providers (OpenAI, Anthropic, Google, Cohere, Mistral) |
 | **Model Profiling** | Automated local profiling with MT-Bench-inspired prompts · optional LLM-as-Judge grading · capability detection (vision, tool calling) · VRAM footprint measurement |
 | **Benchmark Integration** | HuggingFace leaderboard · LMSYS Chatbot Arena · ArtificialAnalysis · `provider.db` with 400+ models from 28+ benchmark sources |
 | **Caching** | Exact-hash routing cache · semantic similarity cache (cosine similarity with adaptive thresholds) · full response cache · embedding cache · persistent SQLite cache · optional Redis backend |
 | **GPU & VRAM** | Multi-vendor monitoring (NVIDIA, AMD/ROCm, Intel i915/xe, Apple Silicon) · multi-GPU aggregation · VRAM-aware routing · automatic model load/unload with LRU or largest-first eviction · AMD APU unified memory support |
-| **Context Compression** | Pre-flight compression pipeline · selective cross-lingual token arbitrage · AST-aware code chunking · BM25 + entropy statistical pruning · dynamic context-window allocation · prefix cache alignment (RadixAttention/APC compatible) |
 | **Security** | Rate limiting (per-IP, per-endpoint) · prompt-injection detection · input sanitization · admin API key auth · IP whitelist · CORS · request size limits · encrypted API key storage (Fernet) · SQL injection prevention · admin audit logging |
 | **Observability** | Prometheus metrics (`/metrics`) · structured JSON logging · request correlation (`X-Request-ID`) · health endpoint with DB/GPU/backend/DLQ status · VRAM dashboard |
-| **API Compatibility** | Full OpenAI-compatible API · streaming (SSE) · tool/function calling · `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/v1/responses` aliases · drop-in replacement for OpenAI SDK |
+| **API Compatibility** | Full OpenAI-compatible API · streaming (SSE) · tool/function calling · `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/v1/skills`, `/v1/responses` aliases · drop-in replacement for OpenAI SDK · OpenCode IDE provider |
+
 
 > **Note:** SmarterRouter does **not** run an LLM by itself. You must provide at least one reachable inference backend.
 
@@ -69,30 +72,42 @@ The router combines **prompt analysis**, **model capability detection**, **local
 ## Architecture Overview
 
 ```text
-OpenAI-compatible client
-               |
-               v
-FastAPI API & Middleware
-   - validation, security, rate limits, CORS
-   - context compression pipeline (optional)
-               |
-               v
-Router Engine
-   - prompt analysis & modality detection
-   - profiles + benchmarks + feedback
-   - quality/speed scoring & fallback cascade
-               |
-               +--> local backend: Ollama, llama.cpp
-               +--> OpenAI-compatible backend
-               +--> external providers: OpenAI, Anthropic, Google, Cohere, Mistral
-               |
-               +--> SQLite router database (profiles, benchmarks, feedback, audit)
-               +--> optional Redis cache
-               +--> optional provider.db benchmark database (400+ models)
-               +--> GPU/VRAM monitor (NVIDIA, AMD, Intel, Apple Silicon)
+OpenAI-compatible client / OpenCode / Web UI
+                       |
+                       v
+FastAPI Gateway & Security Middleware
+   - IP whitelist, validation, rate limits, CORS, content moderation
+                       |
+                       v
+Pre-Flight Dynamic Context Compression Pipeline
+   - Language scanner (bypasses English) -> Dynamic Context Allocation (DCA)
+   - Cross-lingual token arbitrage -> AST chunking & BM25/entropy lexical pruner
+   - Critical syntax force-keep -> Prefix cache aligner & CAR recovery handles
+                       |
+                       v
+Long-Term Conversation Vector Memory
+   - SQLite vector store -> semantic turn recall -> context injection
+                       |
+                       v
+Router Engine & VRAM Manager
+   - Prompt analysis & capability detection
+   - Profiles + benchmarks + user feedback scoring
+   - VRAM budget enforcement & automated LRU model eviction
+   - Circuit breakers & retry policies
+                       |
+                       +--> local backend: Ollama, llama.cpp
+                       +--> OpenAI-compatible backend (vLLM, LiteLLM)
+                       +--> external cloud: OpenAI, Anthropic, Google, Cohere, Mistral
+                       |
+                       +--> SQLite router.db (profiles, benchmarks, feedback, audit)
+                       +--> SQLite conversation_memory.db (persistent vector memory)
+                       +--> optional Redis distributed cache
+                       +--> provider.db benchmark database (400+ models)
+                       +--> GPU/VRAM monitor (NVIDIA, AMD ROCm/APU, Intel, Apple)
 ```
 
 For full architecture diagrams (Mermaid), data-flow sequences, and scoring algorithm visualization, see [docs/architecture.md](docs/architecture.md).
+
 
 ---
 
@@ -237,6 +252,9 @@ ROUTER_ADMIN_API_KEY=replace-with-a-long-random-secret
 
 | Setting | Purpose | Default |
 | :--- | :--- | :--- |
+| `ROUTER_HARDWARE_PRESET` | Preset hardware profile: `6GB_VRAM`, `12GB_VRAM`, `24GB_VRAM`, `CUSTOM` | `6GB_VRAM` |
+| `ROUTER_COMPRESSION_ENABLED` | Pre-flight dynamic context compression toggle | `true` |
+| `ROUTER_COMPRESSION_MODE` | Strategy: `full`, `statistical_only`, `arbitrage_only`, `cache_align_only` | `full` |
 | `ROUTER_PROVIDER` | Backend type: `ollama`, `llama.cpp`, or `openai` | `ollama` |
 | `ROUTER_OLLAMA_URL` | Ollama/compatible backend URL | `http://localhost:11434` |
 | `ROUTER_LLAMA_CPP_URL` | llama.cpp server URL | — |
@@ -245,7 +263,7 @@ ROUTER_ADMIN_API_KEY=replace-with-a-long-random-secret
 | `ROUTER_HOST` / `ROUTER_PORT` | Bind address and port | `0.0.0.0` / `11436` |
 | `ROUTER_QUALITY_PREFERENCE` | `0.0` = speed, `1.0` = quality | `0.5` |
 | `ROUTER_MODEL` | Small model for LLM-based dispatch | — |
-| `ROUTER_PINNED_MODEL` | Model to keep loaded permanently | — |
+| `ROUTER_PINNED_MODEL` | Model to keep loaded permanently (auto-pinned by preset) | `qwen2.5:3b` |
 | `ROUTER_MODEL_KEEP_ALIVE` | Backend keep-alive seconds; `-1` = indefinitely | `-1` |
 | `ROUTER_CASCADING_ENABLED` | Retry with next-best model on failure | `true` |
 | `ROUTER_GENERATION_TIMEOUT` | Backend generation timeout (seconds) | `120` |
@@ -255,6 +273,7 @@ ROUTER_ADMIN_API_KEY=replace-with-a-long-random-secret
 | `ROUTER_REDIS_URL` | Redis URL when cache backend is `redis` | — |
 | `ROUTER_LOG_LEVEL` / `ROUTER_LOG_FORMAT` | Logging verbosity and format (`text`/`json`) | `INFO` / `text` |
 | `ROUTER_SIGNATURE_ENABLED` | Append selected model name to responses | `true` |
+
 
 ### Profiling & Benchmarks
 
@@ -360,13 +379,16 @@ The router exposes OpenAI-compatible endpoints. The virtual model name shown to 
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/v1/chat/completions` | POST | Main chat endpoint. Intelligently routes to the best model. Supports streaming. |
+| `/` or `/demo` | GET | Interactive Visual Web Dashboard with live GPU VRAM telemetry and compression inspection. |
+| `/api/demo/telemetry` | GET | Real-time telemetry feed (GPU memory, DCA bucket, compression savings, vector memory stats). |
+| `/api/demo/inspect` | POST | Test harness to inspect verbatim before/after compression payloads. |
+| `/v1/chat/completions` | POST | Main chat endpoint. Intelligently routes to the best model. Supports streaming and tool calling. |
 | `/v1/embeddings` | POST | Generate vector embeddings (forwarded to the specified embedding model). |
-| `/v1/models` | GET | List available models. |
-| `/v1/skills` | GET | List available tools/skills for agentic workflows. |
+| `/v1/models` | GET | List virtual router model and all discovered/registered models. |
+| `/v1/skills` | GET | List available tools/skills schemas for agentic workflows. |
 | `/v1/feedback` | POST | Submit user feedback to improve future routing. |
-| `/health` | GET | Health check with DB, GPU, backend, DLQ status. |
-| `/metrics` | GET | Prometheus metrics. |
+| `/health` | GET | Subsystem health check with DB, GPU, backend, cache, and DLQ status. |
+| `/metrics` | GET | Prometheus metrics scraper. |
 | `/v1/responses` | POST | Alias for `/v1/chat/completions`. |
 
 Additional compatibility aliases: `/chat/completions`, `/responses`, `/v1/completions`, `/completions`.
@@ -377,20 +399,25 @@ All admin endpoints require `Authorization: Bearer <ROUTER_ADMIN_API_KEY>`.
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
+| `/admin/stats` | GET | Overall system diagnostics, uptime, and throughput summary. |
 | `/admin/profiles` | GET | View local performance profiles for all models. |
 | `/admin/benchmarks` | GET | View aggregated benchmark data. |
 | `/admin/reprofile` | POST | Trigger manual model reprofiling. |
-| `/admin/explain` | GET/POST | Detailed scoring breakdown for a prompt. |
-| `/admin/vram` | GET | Real-time GPU VRAM status, loaded models, history. |
-| `/admin/cache/stats` | GET | Detailed cache statistics with time-series data. |
-| `/admin/cache/analytics` | GET | Per-model cache analytics. |
+| `/admin/models/refresh` | POST | Trigger immediate background model discovery and hot-swap. |
+| `/admin/sync-benchmarks` | POST | Trigger immediate background benchmark sync. |
+| `/admin/compression/stats` | GET | Pre-flight dynamic context compression metrics and token savings summary. |
+| `/admin/explain` | GET/POST | Detailed scoring breakdown and selection rationale for a prompt. |
+| `/admin/vram` | GET | Real-time GPU VRAM status, loaded models, and eviction warnings. |
+| `/admin/cache/stats` | GET | Cache statistics with time-series data. |
+| `/admin/cache/stats/detailed` | GET | Detailed breakdown across exact, semantic, and response cache tiers. |
 | `/admin/cache/invalidate` | POST | Invalidate cache entries (optionally per-model). |
-| `/admin/cache/reset` | POST | Reset cache statistics. |
-| `/admin/models/refresh` | POST | Trigger immediate model discovery. |
-| `/admin/models/reprofile` | POST | Re-profile models. |
-| `/admin/dlq` | GET | Inspect the Dead Letter Queue. |
+| `/admin/cache/clear` | POST | Completely flush all cache tiers. |
+| `/admin/cache/warm` | POST | Pre-warm cache for popular queries. |
+| `/admin/cache/evict` | POST | Force LRU cache eviction. |
+| `/admin/dlq` | GET | Inspect Dead Letter Queue for failed background operations. |
 | `/admin/dlq/retry/{id}` | POST | Retry a failed DLQ entry. |
 | `/admin/audit-log` | GET | Query admin audit logs. |
+
 
 Full API documentation is also available at `/docs` (Swagger UI) and `/redoc`.
 
@@ -510,7 +537,41 @@ curl http://localhost:11436/v1/feedback \
    -d '{"response_id":"chatcmpl-12345678","score":1.0,"comment":"Useful answer"}'
 ```
 
-More integration examples for **JavaScript**, **OpenWebUI**, **Continue**, **Cursor**, and other tools are in [docs/examples/client-integration.md](docs/examples/client-integration.md).
+### OpenCode IDE Integration
+
+SmarterRouter natively integrates with OpenCode via [opencode.json](opencode.json):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "smarterrouter": {
+      "name": "SmarterRouter",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://localhost:11436/v1",
+        "apiKey": "admin123"
+      },
+      "models": {
+        "smarterrouter/main": {
+          "name": "SmarterRouter (VRAM Adaptive & Compressed)"
+        }
+      }
+    }
+  }
+}
+```
+
+### Academic Benchmark Evaluation
+
+SmarterRouter includes an academic benchmarking suite [benchmark.py](benchmark.py) to measure token reduction, prefill latency, and VRAM savings:
+
+```bash
+python benchmark.py --url http://localhost:11436 --iterations 3
+```
+
+More integration examples for **JavaScript/TypeScript**, **OpenWebUI**, **Continue**, and **Cursor** are in [docs/examples/client-integration.md](docs/examples/client-integration.md).
+
 
 ---
 

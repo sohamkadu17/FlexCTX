@@ -6,7 +6,8 @@ Practical examples for deploying and integrating SmarterRouter.
 
 - [OpenWebUI Integration](openwebui-integration.md) - Step-by-step guide to connect SmarterRouter with OpenWebUI
 - [Production Deployment](production-deployment.md) - Multi-service setup with monitoring and security
-- [Docker Compose Examples](docker-compose/) - Various deployment configurations
-- [Client Integration](client-integration.md) - Using SmarterRouter with various AI applications
+- [Docker Compose GPU Templates](../installation.md#gpu-support) - Ready-to-use Compose templates for NVIDIA, AMD, Intel, Apple Silicon, and Multi-GPU
+- [Client Integration](client-integration.md) - Using SmarterRouter with various AI applications (Python, Node, OpenCode, Cursor, Continue)
 
 For basic installation, see [Installation Guide](../installation.md).
+

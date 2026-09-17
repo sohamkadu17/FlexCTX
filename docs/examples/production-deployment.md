@@ -40,21 +40,20 @@ services:
     env_file:
       - .env
     volumes:
-      - ./router.db:/app/router.db:ro  # read-only mount
-      - ./logs:/app/logs
-      - ./data:/app/data
+      - ./.env:/app/.env:ro
+      - ./data:/app/data:rw
     restart: unless-stopped
-    read_only: true  # immutable filesystem
     security_opt:
       - no-new-privileges:true
     networks:
       - smarterrouter-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11436/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:11436/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
+
     deploy:
       resources:
         limits:
@@ -109,19 +108,20 @@ ROUTER_RATE_LIMIT_ADMIN_REQUESTS_PER_MINUTE=10
 
 ```env
 # Only allow your frontend origins
-ROUTER_CORS_ALLOWED_ORIGINS=https://your-app.com,https://admin.your-app.com
+ROUTER_CORS_ORIGINS=https://your-app.com,https://admin.your-app.com
 ```
 
 ### 4. Use Non-Root User
 
-The Dockerfile already creates a non-root user `smarterrouter`. Ensure it's being used:
+The Dockerfile already creates a non-root user `router` (UID 1000). Ensure files in `./data` are writable:
 
 ```yaml
 # In docker-compose.prod.yml
 services:
   smarterrouter:
-    user: "1000:1000"  # smarterrouter user
+    user: "1000:1000"  # router user
 ```
+
 
 ### 5. Network Isolation
 

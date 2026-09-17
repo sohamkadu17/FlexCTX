@@ -24,13 +24,13 @@ cd smarterrouter
 
 ```bash
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
 
-# Install dependencies
+# Install dependencies (includes test & lint tools)
 pip install -r requirements.txt
-pip install -r requirements-dev.txt  # Development dependencies
 ```
+
 
 ## Development Environment
 
